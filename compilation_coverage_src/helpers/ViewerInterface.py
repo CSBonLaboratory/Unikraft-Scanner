@@ -1,3 +1,3 @@
 class ViewerInterface:
-    def print_view():
-        raise NotImplementedError("Type has not implemented print_view() method")
+    def print_view(self):
+        raise NotImplementedError(f"{type(self)} has not implemented print_view() method")

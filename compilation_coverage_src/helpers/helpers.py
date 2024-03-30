@@ -11,6 +11,8 @@ from typing import Union
 from enum import Enum
 from helpers.CompilationBlock import CompilationBlock
 from helpers.MongoEntityInterface import MongoEntityInterface
+from compilers.CompilerInterface import CompilerInterface
+from compilers.GCC import GCC
 
 def git_commit_strategy(real_src_path : str) -> ObjectId:
     src_tokens = real_src_path.split("/")
@@ -27,7 +29,15 @@ def git_commit_strategy(real_src_path : str) -> ObjectId:
 
     return latest_commit_id
 
+class AppFormat(Enum):
+    NATIVE = "native"
+    BINCOMPAT = "bincompat"
 
+def find_app_format(app_path : str) -> str:
+
+    if os.path.exists(app_path + "/.unikraft/apps/elfloader"):
+        return AppFormat.BINCOMPAT
+    return AppFormat.NATIVE
 
 
 def remove_comments(cpy_src : str):
@@ -120,21 +130,49 @@ class SHA1Strategy(SourceVersionStrategy):
         return super().to_mongo_dict()
 
 
-def get_source_version_info(real_src_path) -> Union[SourceVersionStrategy, dict]:
+def get_source_version_info(real_src_path : str) -> SourceVersionStrategy:
+
+    '''
+    Uses the most apropriate hashing strategy for versioning the file.
+
+    Firstly, it tries to get the latest git commit id of the file
+    Otherwise, hashes the file contents using sha-1.
+
+    Args:
+        real_src_path(str): Absolute path of the source file
+
+    Returns:
+        A SourceVersionStrategy instance for this file
+    '''
 
     logger = logging.getLogger(__name__)
 
     latest_commit_id = git_commit_strategy(real_src_path)
-
+    
     if latest_commit_id != "":
-        return {GitCommitStrategy.version_key : latest_commit_id}
+        version = GitCommitStrategy()
+        version.version_value = latest_commit_id
 
-    logger.critical(f"{real_src_path} is not part of a valid git repository or submodule. Defaulting to SHA256 strategy ...")
+        return version
 
-    return {SHA1Strategy.version_key : hash_strategy(real_src_path)}
+    logger.warning(f"{real_src_path} is not part of a valid git repository or submodule. Defaulting to SHA1 strategy ...")
+    
+    version = SHA1Strategy()
+    version.apply_strategy(real_src_path)
+    return version
 
 
 def trigger_compilation_blocks(activation_cmd : str) -> list[int]:
+
+    '''
+    Opens a shell process that executes the compilation command of a source file.
+
+    Args:
+        activation_cmd(str): Compilation command
+    
+    Returns:
+        A list of indexes of compilation blocks which were activated after rerunning the command.
+    '''
 
     logger = logging.getLogger(__name__)
 
@@ -144,11 +182,12 @@ def trigger_compilation_blocks(activation_cmd : str) -> list[int]:
     
     warnings = warnings_raw.decode()
 
+    # TODO: Debug only. Remove in near future
     f = open("dorel","a")
     f.write(warnings)
     f.close()
 
-    # return the numbers of compilation blocks found in warning directives
+    # return the indexes of compilation blocks found in warning directives
     activated_blocks = [int(block_match) for block_match in re.findall("warning: #warning COMPILATION_COVERAGE_([0-9]+)", warnings)]
 
     logger.debug(f"Compilation blocks triggered are {activated_blocks}")
@@ -219,9 +258,22 @@ def find_real_source_file(src_path : str, app_build_dir : str, lib_name : str) -
     return real_src_path
 
 
-def instrument_source(parsed_compilation_bocks : list[CompilationBlock], copy_src_path):
+def instrument_source(parsed_compilation_blocks : list[CompilationBlock], src_path):
 
-    copy_src_fd = open(copy_src_path, 'r')
+    '''
+    Add a #warning directive at the start of every compilation block so that we can see what blocks are triggered during a compilation.
+
+    This operation modifies the original source files. Do not forget to restore them using a prior clone ! 
+
+    Args:
+        parsed_compilation_blocks(list[CompilationBlock]): List of compilation blocks found in the source file
+        copy_src_path(str): Absolute path of the source file
+
+    Returns:
+        None
+    '''
+
+    copy_src_fd = open(src_path, 'r')
 
     instrumented_code = []
 
@@ -230,14 +282,14 @@ def instrument_source(parsed_compilation_bocks : list[CompilationBlock], copy_sr
     for i in range(len(lines)):
         instrumented_code.append(lines[i])
         
-        current_block = [block for block in parsed_compilation_bocks if block.start_line == i]
+        current_block = [block for block in parsed_compilation_blocks if block.start_line == i]
 
         if current_block != []:
             instrumented_code.append(f"#warning COMPILATION_COVERAGE_{current_block[0].block_counter}\n")
     
     copy_src_fd.close()
 
-    instr_copy_src_fd = open(copy_src_path, "r+")
+    instr_copy_src_fd = open(src_path, "r+")
 
     instr_copy_src_fd.writelines(instrumented_code)
 
@@ -245,7 +297,19 @@ def instrument_source(parsed_compilation_bocks : list[CompilationBlock], copy_sr
 
 
 
-def get_source_compilation_command(app_build_dir, lib_name, real_src_path) -> str | None:
+def get_source_compilation_command(app_build_dir : str, lib_name : str, real_src_path : str) -> str | None:
+
+    '''
+    Get compilation command from the correct *.o.cmd file of the source file.
+
+    Args:
+        app_build_dir(str): Absolute path of the build directory of the app
+        lib_name(str): Name of the subfolder in the build directory where the *.o.cmd file should be
+        real_src_path(str): Absolute path of the source file
+
+    Returns:
+        The compilation command as a string or None if the search was not successful.
+    '''
 
     # the source is a c file, we need .o.cmd extension, but there might be files that do not respect the naming convention
     # iterate through .o.cmd files
@@ -262,7 +326,7 @@ def get_source_compilation_command(app_build_dir, lib_name, real_src_path) -> st
 
             cmd_file_fd = open(f"{app_build_dir}/{lib_name}/{compile_command_file}", "r")
 
-            # ignore the "" from the command
+            # ignore the "" from the start of the command
             make_command = cmd_file_fd.readline()[2:]
 
             make_tokens = make_command.split()
@@ -280,3 +344,20 @@ def get_source_compilation_command(app_build_dir, lib_name, real_src_path) -> st
                 cmd_file_fd.close()
         
     return None
+
+
+def try_compilers_for_src_path(command : str, o_cmd_file_abs_path : str) -> str | None:
+
+
+    # NEW_COMPILER: add new instance to the list so that we can enrich the search for compilation command
+    # compiler abstract should be singleton and implement CompilerInterface 
+    supported_compilers : list[CompilerInterface] = [ GCC() ]
+
+    for compiler in supported_compilers:
+        src_path = compiler.find_source_file(command, o_cmd_file_abs_path)
+
+        if src_path != None:
+            return src_path
+        
+    return None
+

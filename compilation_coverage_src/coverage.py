@@ -17,6 +17,8 @@ import list_app
 import view_app
 import status
 
+from helpers.helpers import find_app_format
+
 default_log_file = "./coverage_logs.log"
 default_out_file = "./coverage_out.ansi"
 saved_verbose = None
@@ -29,7 +31,7 @@ def main():
 
     parser = argparse.ArgumentParser(
         description="Compilation coverage tool for Unikraft. To be used with Coverity to detect new unscanned code regions"
-        )
+    )
 
     
     subparser = parser.add_subparsers(dest='operations', help='Available operations')
@@ -112,8 +114,9 @@ def main():
     add_app_parser.add_argument(
         "-f",
         "--format",
-        required=True,
+        required=False,
         action='store',
+        help="Type of Unikraft app. It must be native or thorugh binary compatibility of elfloader. If it is not present, this tool will automatically find its type",
         choices=["native", "bincompat"]
     )
 
@@ -200,8 +203,9 @@ def main():
     if args.operations == "app":
 
         if args.app_operations == "add":
-            build_dir = args.build if args.build != None else args.app + "/build"
-            add_app.add_app_subcommand(args.app, build_dir, args.tag)
+            build_dir = args.app + "/.unikraft/build" if args.build == None else args.build
+            app_format = find_app_format(args.app) if args.format == None else args.format
+            add_app.add_app_subcommand(args.app, build_dir, args.tag, app_format)
 
         if args.app_operations == "list":
             list_app.list_app_subcommand(saved_outfile)
@@ -217,7 +221,4 @@ def main():
     
 
 if __name__ == "__main__":
-
-    
-    
     main()

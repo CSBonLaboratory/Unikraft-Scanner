@@ -108,7 +108,7 @@ class CSourceDocument(CSourceNoDocument, MongoEntityInterface, ViewerInterface, 
 
             current_block, depth = queue.get()
 
-            current_block.print_view(tabs - 1, depth, out_file, compilation_tag)
+            current_block.print_view(tabs - 1, depth, out_file, compilation_tags)
 
             for child_local_id in reversed(current_block.children):
                 queue.put((compile_blocks[child_local_id], depth + 1))

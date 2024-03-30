@@ -3,15 +3,15 @@ from colorama import Fore
 
 logger = logging.getLogger(__name__)
 
-def get_app_coverage(compilation_id) -> tuple[int, ...]:
+def get_app_coverage(compilation_tag : str) -> tuple[int, ...]:
 
-    from coverage import DATABASE, db, SOURCES_COLLECTION, COMPILATION_COLLECTION, COVERITY_DEFECTS_COLLECTION
+    from coverage import DATABASE, db, SOURCES_COLLECTION
 
     total_lines = 0
     compiled_lines = 0
 
-    for source_document in db[DATABASE][SOURCES_COLLECTION].find(filter={"triggered_compilations" : {"$elemMatch" : {"$eq" : compilation_id}}}):
-
+    for source_document in db[DATABASE][SOURCES_COLLECTION].find(filter={"triggered_compilations" : {"$elemMatch" : {"$eq" : compilation_tag}}}):
+        
         total_lines += source_document["universal_lines"]
         compiled_lines += source_document["universal_lines"]
 
@@ -19,17 +19,17 @@ def get_app_coverage(compilation_id) -> tuple[int, ...]:
 
             total_lines += compile_block["lines"]
 
-            if compilation_id in compile_block["triggered_compilations"]:
+            if compilation_tag in compile_block["triggered_compilations"]:
                 compiled_lines += compile_block["lines"]
 
     return compiled_lines, total_lines
 
 
-def print_app_coverage(compilation_id, compilation_tag, saved_outfile):
+def print_app_coverage(compilation_tag, saved_outfile):
 
-    logger.debug(f"Found app with tag {compilation_tag} and id {compilation_id}")
+    logger.debug(f"Found app with tag {compilation_tag}")
 
-    compiled_lines, total_lines = get_app_coverage(compilation_id)
+    compiled_lines, total_lines = get_app_coverage(compilation_tag)
 
     logger.info(f"Total lines {total_lines} with compiled lines {compiled_lines}")
 
@@ -51,10 +51,10 @@ def print_app_coverage(compilation_id, compilation_tag, saved_outfile):
 
 def list_app_subcommand(saved_outfile : str):
 
-    from coverage import DATABASE, db, SOURCES_COLLECTION, COMPILATION_COLLECTION, COVERITY_DEFECTS_COLLECTION
+    from coverage import DATABASE, db, COMPILATION_COLLECTION
 
     for compilation_document in db[DATABASE][COMPILATION_COLLECTION].find({}):
-        print_app_coverage(compilation_document["_id"], compilation_document["tag"], saved_outfile)
+        print_app_coverage(compilation_document["tag"], saved_outfile)
     
     return
     

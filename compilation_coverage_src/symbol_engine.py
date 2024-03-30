@@ -57,14 +57,26 @@ def get_full_symbol_condition(start_line : int, lines : list[str]) -> tuple[str,
 
     return full_condition, i + 1
 
-def find_compilation_blocks_and_lines(cpy_src : str, do_remove_comments : bool) -> tuple[list[CompilationBlock], int]:
+def find_compilation_blocks_and_lines(src_path : str, do_remove_comments : bool) -> tuple[list[CompilationBlock], int]:
+
+    '''
+    Parses the C source file and finds compilation blocks (also cases of nested compilation blocks)
+
+    Args:
+        src_path(str): Absolute path of the source file
+        do_remove_comments(bool): Whether or not to remove C-style comments from the source file
+
+    Returns:
+        A tuple where the first element is a list of CompilationBlock instances and 
+        the second is the number of lines that are compiled no matter what symbols are used (universal)
+    '''
 
     logger = logging.getLogger(__name__)
 
     if do_remove_comments:
-        remove_comments(cpy_src)
+        remove_comments(src_path)
     
-    src_fd = open(cpy_src, 'r')
+    src_fd = open(src_path, 'r')
 
     lines = src_fd.readlines()
 

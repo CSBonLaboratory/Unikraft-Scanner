@@ -6,7 +6,13 @@ import os
 import shutil
 from typing import Union
 from symbol_engine import find_compilation_blocks_and_lines, find_children
-from helpers.helpers import get_source_version_info, trigger_compilation_blocks, find_real_source_file, get_source_compilation_command, instrument_source
+from helpers.helpers import (
+    get_source_version_info,
+    trigger_compilation_blocks,
+    try_compilers_for_src_path,
+    get_source_compilation_command,
+    instrument_source
+)
 from helpers.CompilationBlock import CompilationBlock
 from helpers.CSourceDocument import CSourceDocument
 from helpers.helpers import SourceStatus, SourceVersionStrategy, GitCommitStrategy, SHA1Strategy
@@ -16,6 +22,8 @@ from bson.objectid import ObjectId
 from pymongo import ReturnDocument
 from defects.AbstractLineDefect import AbstractLineDefect
 from defects.CoverityDefect import CoverityDefect
+from functools import reduce
+from collections import namedtuple
 
 DATABASE = coverage.DATABASE
 SOURCES_COLLECTION = coverage.SOURCES_COLLECTION
@@ -25,17 +33,30 @@ db = coverage.db
 
 logger = logging.getLogger(__name__)
 
-def is_new_source(src_path : str) -> SourceStatus:
+def is_new_source(src_path : str, app_path : str) -> SourceStatus:
+
+    '''
+    Checks to see the status of the source file.
+
+    It can detect the hashing strategy used for versioning (git commit id or sha-1) and queries the db.
+
+    Args:
+        src_path(str): Absolute path of the source file, fetched from its *.o.cmd file.
+        app_path(str): Absolute path of the app directory.
+    
+    Returns:
+        A SourceStatus instance which means that the source file is new, existing but modified or existing and unmodified.
+    '''
     
     global db
 
-    latest_version : Union[SourceVersionStrategy, dict] = get_source_version_info(src_path)
+    latest_version : SourceVersionStrategy = get_source_version_info(src_path)
 
     existing_source : Union[CSourceDocument, dict] = db[DATABASE][SOURCES_COLLECTION].find_one(
-        {"source_path" : os.path.relpath(src_path, os.environ["UK_WORKDIR"])}
+        {"source_path" : os.path.relpath(src_path, app_path)}
     )
 
-    logger.debug(f"{src_path} has git commit log {latest_version}")
+    logger.debug(f"{src_path} has hash {latest_version.to_mongo_dict()}")
         
     if existing_source == None:
         logger.debug(f"{src_path} has not been found in the database. STATUS: NEW")
@@ -67,12 +88,21 @@ def is_new_source(src_path : str) -> SourceStatus:
     
         
 
-def update_db_activated_compile_blocks(activated_block_counters : list[int], src_path : str, compilation_tag: str) -> Union[CSourceDocument, dict]:
+def update_db_activated_compile_blocks(activated_block_counters : list[int], rel_src_path : str, compilation_tag: str) -> Union[CSourceDocument, dict]:
+    '''
+    Updates the document of the source file from the db with the activated compilation blocks in the context of the registered compilation.
 
+    Args:
+        activated_block_counter(list[int]): List of indexes of triggered/activated compilation block (info given by a prior call to trigger_compialtion_blocks() )
+        rel_src_path: Relative path of the source file in the context of the app directory
+
+    Returns:
+        The updated document as a dict.
+    '''
     global db
     
     source_document : Union[CSourceDocument, dict] = db[DATABASE][SOURCES_COLLECTION].find_one(
-        {"source_path": os.path.relpath(src_path, os.environ["UK_WORKDIR"])}
+        {"source_path": rel_src_path}
     )
 
     logger.debug(f"BEFORE update of activated compile blocks\n{source_document}")
@@ -93,7 +123,7 @@ def update_db_activated_compile_blocks(activated_block_counters : list[int], src
     source_document["compiled_stats"][compilation_tag] = compiled_lines
 
     updated_source_document = db[DATABASE][SOURCES_COLLECTION].find_one_and_update(
-        filter= {"source_path" : os.path.relpath(src_path, os.environ["UK_WORKDIR"])},
+        filter= {"source_path" : rel_src_path},
         update= {"$set" : source_document},
         return_document=pymongo.ReturnDocument.AFTER
     )
@@ -102,10 +132,26 @@ def update_db_activated_compile_blocks(activated_block_counters : list[int], src
 
     return updated_source_document
 
-def init_source_in_db(source_status : SourceStatus, src_path : str, real_src_path : str, total_blocks : Union[list[CompilationBlock]], universal_lines : int, compilation_tag : str, lib_name : str) -> bool:
+def init_source_in_db(source_status : SourceStatus, src_path : str, rel_src_path : str, total_blocks : list[CompilationBlock], universal_lines : int, compilation_tag : str, lib_name : str) -> bool:
+    '''
+    Creates a new document in db for a new source file, or updates an existing source file that has been modified.
 
+    Adds various other metadata such as total lines of code and inits other fields that will be populated laters.
+
+    Args:
+        source_status(SourceStatus): Status of the source file.
+        src_path(str): Absolute path of the source file.
+        rel_src_path(str): Relative path of the source file in the context of the app directory
+        total_blocks(list[CompilationBlocks]): List of CompilationBlocks instances found in the source file
+        universal_lines(int): Number of lines that are compiled no matter what symbols are used
+
+    Returns:
+        bool: Wheter or not it created(for new sources) or updated(for deprecated sources) a document in the db
+
+    '''
     global db
 
+    # build hierarchy of compilation blocks (usefull for vizualization if we have nested blocks)
     find_children(total_blocks)
 
     # calculate total lines of code
@@ -114,7 +160,7 @@ def init_source_in_db(source_status : SourceStatus, src_path : str, real_src_pat
         total_lines += cb.lines
     
     new_src_document : Union[CSourceDocument, dict] = {
-                "source_path" :  os.path.relpath(src_path, os.environ["UK_WORKDIR"]),
+                "source_path" :  rel_src_path,
                 "compile_blocks" : [compile_block.to_mongo_dict() for compile_block in total_blocks],
                 "universal_lines" : universal_lines,
                 "triggered_compilations" : [compilation_tag],
@@ -124,12 +170,10 @@ def init_source_in_db(source_status : SourceStatus, src_path : str, real_src_pat
                 "defects" : []
     }
 
-    # TODO right now will only have git_commit_id since hashes are employed for generated or out of repo C source files
-    version_info : Union[SourceVersionStrategy, dict] = get_source_version_info(real_src_path)
 
-    new_src_document.update(version_info)
+    version_info : Union[SourceVersionStrategy, dict] = get_source_version_info(src_path)
 
-    #TODO what to add for real_src_path ? 
+    new_src_document.update(version_info.to_mongo_dict())
 
     # the source is new so we create a new entry in the database
     if source_status == SourceStatus.NEW:
@@ -143,11 +187,11 @@ def init_source_in_db(source_status : SourceStatus, src_path : str, real_src_pat
         
         logger.debug(
             f"BEFORE source update due to deprecated commit\n" + 
-            f"{db[DATABASE][SOURCES_COLLECTION].find_one({'source_path' : os.path.relpath(src_path, os.environ['UK_WORKDIR'])})}"
+            f"{db[DATABASE][SOURCES_COLLECTION].find_one({'source_path' : rel_src_path})}"
         )
 
         updated_source_document : Union[CSourceDocument, dict] = db[DATABASE][SOURCES_COLLECTION].find_one_and_update(
-            filter= {"source_path" : os.path.relpath(src_path, os.environ['UK_WORKDIR'])},
+            filter= {"source_path" : rel_src_path},
             update= {"$set" : new_src_document},
             return_document= ReturnDocument.AFTER
         )
@@ -159,12 +203,24 @@ def init_source_in_db(source_status : SourceStatus, src_path : str, real_src_pat
     
     return True
 
-def fetch_existing_compilation_blocks(src_path) -> list[CompilationBlock]:
+def fetch_existing_compilation_blocks(rel_src_path : str) -> list[CompilationBlock]:
+    '''
+    Fetch compilation blocks from the db.
 
+    To be used on an existing source in the db.
+
+    This is an optimization, so that it will not reparse the source file for the compilation blocks.
+
+    Args:
+        rel_src_path(str): RELATIVE path of the source file in the context of the app directory
+
+    Returns:
+        A list of CompilationBlock instances foudn in the source file
+    '''
     global db
 
     existing_blocks : Union[list[CompilationBlock], dict] = db[DATABASE][SOURCES_COLLECTION].find_one(
-            filter= {"source_path" : os.path.relpath(src_path, os.environ['UK_WORKDIR'])},
+            filter= {"source_path" : rel_src_path},
             projection= {"compile_blocks" : 1, "_id" : 0}
         )
 
@@ -175,33 +231,27 @@ def fetch_existing_compilation_blocks(src_path) -> list[CompilationBlock]:
     return total_blocks
 
 
-def get_source_compile_coverage(compilation_tag : str, lib_name : str, app_build_dir : str, src_path : str) -> Union[CSourceDocument, dict]:
+def get_source_compile_coverage(compilation_tag : str, lib_name : str, app_dir : str, app_build_dir : str, src_path : str) -> Union[CSourceDocument, dict]:
 
     global db
 
-    real_src_path = find_real_source_file(src_path, app_build_dir, lib_name)
-
-    # TODO, analysis of c source files that do not exist but are generated by other files is disabled for now 
-    if src_path != real_src_path:
-        logger.warning(f"Found generator file {src_path} which will generate {real_src_path}. Skiping analysis for now ...")
-        return None
-    
-    real_src_file_name = real_src_path.split("/")[-1]
-
-    copy_source_path = f"{app_build_dir}/srcs/{real_src_file_name}"
+    # we need relative path since this tool might be run in various environments, or on various apps on the same environment
+    rel_src_path = os.path.relpath(src_path, app_dir)
 
     # very important !! the source file is copied before code instrumentation, later it will be back to its initial form
-    shutil.copyfile(src_path, copy_source_path)
+    copy_source_path = f"{app_dir}/.coverage/{rel_src_path}"
+    os.makedirs(os.path.dirname(copy_source_path), exist_ok=True)
+    shutil.copy(src_path, copy_source_path)
 
-    source_status : SourceStatus = is_new_source(src_path)
+    source_status : SourceStatus = is_new_source(src_path, app_dir)
 
     # the source is already registered, so we can fetch all compilation blocks from the database
     # also bind the compilation id to this file since the universal lines of code are compiled
     if source_status == SourceStatus.EXISTING:
-        total_blocks : list[CompilationBlock] = fetch_existing_compilation_blocks(src_path)
+        total_blocks : list[CompilationBlock] = fetch_existing_compilation_blocks(os.path.relpath(src_path, app_dir))
 
         db[DATABASE][SOURCES_COLLECTION].find_one_and_update(
-            filter={"source_path" :  os.path.relpath(src_path, os.environ["UK_WORKDIR"])},
+            filter={"source_path" :  rel_src_path},
             update={"$push": {"triggered_compilations" : compilation_tag}}
         )
 
@@ -209,29 +259,29 @@ def get_source_compile_coverage(compilation_tag : str, lib_name : str, app_build
     # or the source needs to be cleared due to deprecation so we must parse the updated source file and find compilation blocks
     elif source_status == SourceStatus.NEW or source_status == SourceStatus.DEPRECATED:
 
-        total_blocks, universal_lines = find_compilation_blocks_and_lines(real_src_path, True)
-        init_source_in_db(source_status, src_path, real_src_path, total_blocks, universal_lines, compilation_tag, lib_name)
+        total_blocks, universal_lines = find_compilation_blocks_and_lines(src_path, True)
+        init_source_in_db(source_status, src_path, rel_src_path, total_blocks, universal_lines, compilation_tag, lib_name)
 
 
-    compile_command = get_source_compilation_command(app_build_dir, lib_name, real_src_path)
+    compile_command = get_source_compilation_command(app_build_dir, lib_name, src_path)
 
     if compile_command == None:
         logger.critical(f"No .o.cmd file which has compilation command for {src_path} in {lib_name}")
         db[DATABASE][SOURCES_COLLECTION].find_one_and_delete({"source_path" : os.path.relpath(src_path, os.environ['UK_WORKDIR'])})
         return None
 
-    instrument_source(total_blocks, real_src_path)
+    instrument_source(total_blocks, src_path)
 
     activated_block_counters = trigger_compilation_blocks(compile_command)
 
     updated_src_document = update_db_activated_compile_blocks(
             activated_block_counters= activated_block_counters,
-            src_path= src_path,
+            rel_src_path= rel_src_path,
             compilation_tag= compilation_tag
     )
     
-    # go back to source original code without instrumentation
-    shutil.copyfile(copy_source_path, real_src_path)
+    # go back to original source code without instrumentation
+    shutil.copyfile(copy_source_path, src_path)
 
     return updated_src_document
 
@@ -305,7 +355,7 @@ def insert_defects_in_db(cov_defects : list[AbstractLineDefect], compilation_tag
                 )
             else:
                 
-                logger.debug(f"Defect {defect} inserted in compile block {current_block.__dict__}")
+                logger.debug(f"Defect {defect} inserted in compile block {current_block.to_mongo_dict()}")
                 # insert the defect in the suitable compile block
                 cb : dict = db[DATABASE][SOURCES_COLLECTION].find_one(
                     filter={
@@ -329,6 +379,50 @@ def insert_defects_in_db(cov_defects : list[AbstractLineDefect], compilation_tag
                 )
 
 def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_path : str):
+
+    global db
+
+    for (current_lib, _, uk_files) in os.walk(app_build_dir, topdown=True):
+
+        for file in uk_files:
+            
+            # first filter, get *.o.cmd, kconfig has same format of files but are weird
+            if file[-6 : ] == ".o.cmd" and current_lib.split("/")[-1] != "kconfig":
+                
+                logger.debug("........................................................................")
+                o_cmd_file_abs_path = f"{current_lib}/{file}"
+
+                with open(o_cmd_file_abs_path, "r") as f:
+                    # ignore the start which is ""
+                    command = f.read()[2 : ]
+                    f.close()
+
+                src_path = try_compilers_for_src_path(command, o_cmd_file_abs_path)
+
+                if src_path == None:
+                    logger.debug(f"{o_cmd_file_abs_path} does not have a compilation command")
+                    continue
+                
+                logger.debug(f"|||||||||||||||||||||||{src_path}||||||||||||||||||||||||||||||")
+
+                get_source_compile_coverage(
+                    compilation_tag=compilation_tag,
+                    lib_name=current_lib.split("/")[-1],
+                    app_dir=app_path,
+                    app_build_dir=app_build_dir,
+                    src_path=src_path
+                )
+
+    #coverity = CoverityAPI()
+
+    # get the Coverity defects and insert them in a table
+    #cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(coverity.prepare_defects_for_db(d, compilation_tag, app_path)), coverity.fetch_raw_defects()))
+
+    #insert_defects_in_db(cov_defects, compilation_tag)
+
+
+
+def analyze_application_sources_v1(compilation_tag : str, app_build_dir : str, app_path : str):
 
     global rootTrie, db
 
@@ -379,15 +473,14 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
 
     insert_defects_in_db(cov_defects, compilation_tag)
 
-def add_app_subcommand(app_workspace : str, app_build_dir : str, compilation_tag : str):
+def add_app_subcommand(app_dir : str, app_build_dir : str, compilation_tag : str, app_format : str):
 
     global db
 
-    if not os.path.exists(f"{app_build_dir}/srcs"):
-        os.mkdir(f"{app_build_dir}/srcs")
+    if not os.path.exists(f"{app_dir}/.coverage"):
+        os.mkdir(f"{app_dir}/.coverage")
 
     # check if an identic compilation occured
-
     existing_compilation = db[DATABASE][COMPILATION_COLLECTION].find_one(
                     {"tag" : compilation_tag}
         )
@@ -395,9 +488,15 @@ def add_app_subcommand(app_workspace : str, app_build_dir : str, compilation_tag
         logger.critical(f"An existing compilation has been previously registered with this tag and app\n{existing_compilation}")
         return
     
-    logger.info(f"No compilation has been found. Proceeding with analyzing source {app_workspace}")
+    logger.info(f"No compilation has been found. Proceeding with analyzing source {app_dir}")
 
-    compilation_id : ObjectId = db[DATABASE][COMPILATION_COLLECTION].insert_one({"tag" : compilation_tag, "app": app_workspace}).inserted_id
+    compilation_id : ObjectId = db[DATABASE][COMPILATION_COLLECTION].insert_one(
+        {
+            "tag" : compilation_tag,
+            "app": app_dir,
+            "format" : app_format
+        }
+    ).inserted_id
     logger.debug(f"New compilation has now id {compilation_id}")
 
-    analyze_application_sources(compilation_tag, app_build_dir, app_workspace)
+    analyze_application_sources(compilation_tag, app_build_dir, app_dir)
