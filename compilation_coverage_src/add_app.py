@@ -56,28 +56,31 @@ def is_new_source(src_path : str, app_path : str) -> SourceStatus:
         {"source_path" : os.path.relpath(src_path, app_path)}
     )
 
+    
     logger.debug(f"{src_path} has hash {latest_version.to_mongo_dict()}")
         
     if existing_source == None:
         logger.debug(f"{src_path} has not been found in the database. STATUS: NEW")
         return SourceStatus.NEW
     
-    if GitCommitStrategy.version_key in latest_version and GitCommitStrategy.version_key in existing_source:
-        if existing_source[GitCommitStrategy.version_key] == latest_version[GitCommitStrategy.version_key]:
-            logger.debug(f"{src_path} source is already registered. STATUS: EXISTING checked using git commit id {latest_version[GitCommitStrategy.version_key]}")
+    found_doc : CSourceDocument = CSourceDocument(existing_source)
+
+    if latest_version.version_key == GitCommitStrategy.version_key and found_doc.source_version.version_key == GitCommitStrategy.version_key:
+        if found_doc.source_version.version_value == latest_version.version_value:
+            logger.debug(f"{src_path} source is already registered. STATUS: EXISTING checked using git commit id {latest_version.version_value}")
             return SourceStatus.EXISTING
         else:
             # since it is a previous/deprecated version of that source we need to delete its compile blocks from the db, update the commit_id and restart the analysis process
-            logger.debug(f"{src_path} has commit {latest_version[GitCommitStrategy.version_key]} but database has outdated commit {existing_source[GitCommitStrategy.version_key]}.STATUS: DEPRECATED")
+            logger.debug(f"{src_path} has commit {latest_version.version_value} but database has outdated commit {found_doc.source_version.version_value}.STATUS: DEPRECATED")
             return SourceStatus.DEPRECATED
     
-    if SHA1Strategy.version_key in latest_version and SHA1Strategy.version_key in existing_source:
-        if existing_source[SHA1Strategy.version_key] == latest_version[SHA1Strategy.version_key]:
-            logger.debug(f"{src_path} source is already registered. STATUS: EXISTING checked using sha1 id {latest_version[SHA1Strategy.version_key]}")
+    if latest_version.version_key == SHA1Strategy.version_key and found_doc.source_version.version_key == SHA1Strategy.version_key:
+        if found_doc.source_version.version_value == latest_version.version_value:
+            logger.debug(f"{src_path} source is already registered. STATUS: EXISTING checked using sha1 id {latest_version.version_value}")
             return SourceStatus.EXISTING
         else:
             # since it is a previous/deprecated version of that source we need to delete its compile blocks from the db, update the commit_id and restart the analysis process
-            logger.debug(f"{src_path} has hash {latest_version[SHA1Strategy.version_key]} but database has outdated hash {existing_source[SHA1Strategy.version_key]}.STATUS: DEPRECATED")
+            logger.debug(f"{src_path} has hash {latest_version.version_value} but database has outdated hash {found_doc.source_version.version_value}.STATUS: DEPRECATED")
             return SourceStatus.DEPRECATED
         
 
@@ -403,6 +406,7 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
                     logger.debug(f"{o_cmd_file_abs_path} does not have a compilation command")
                     continue
                 
+                logger.debug(f"{o_cmd_file_abs_path} has a correct compilation command file")
                 logger.debug(f"|||||||||||||||||||||||{src_path}||||||||||||||||||||||||||||||")
 
                 get_source_compile_coverage(
@@ -413,16 +417,23 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
                     src_path=src_path
                 )
 
-    #coverity = CoverityAPI()
+    coverity : CoverityAPI = CoverityAPI()
+
+    coverity.submit_build(app_path, pipeline=False)
+
+    while coverity.check_submition(compilation_tag) == False:
+        continue
 
     # get the Coverity defects and insert them in a table
-    #cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(coverity.prepare_defects_for_db(d, compilation_tag, app_path)), coverity.fetch_raw_defects()))
+    cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(coverity.prepare_defects_for_db(d, compilation_tag, app_path)), coverity.fetch_raw_defects()))
 
-    #insert_defects_in_db(cov_defects, compilation_tag)
+    insert_defects_in_db(cov_defects, compilation_tag)
 
 
 
 def analyze_application_sources_v1(compilation_tag : str, app_build_dir : str, app_path : str):
+
+    # DEPRECATED !!!!
 
     global rootTrie, db
 

@@ -14,7 +14,7 @@ from helpers.MongoEntityInterface import MongoEntityInterface
 from compilers.CompilerInterface import CompilerInterface
 from compilers.GCC import GCC
 
-def git_commit_strategy(real_src_path : str) -> ObjectId:
+def git_commit_strategy(real_src_path : str) -> str:
     src_tokens = real_src_path.split("/")
 
     src_sub_path = "/".join(src_tokens[:-1])
@@ -36,8 +36,8 @@ class AppFormat(Enum):
 def find_app_format(app_path : str) -> str:
 
     if os.path.exists(app_path + "/.unikraft/apps/elfloader"):
-        return AppFormat.BINCOMPAT
-    return AppFormat.NATIVE
+        return AppFormat.BINCOMPAT.value
+    return AppFormat.NATIVE.value
 
 
 def remove_comments(cpy_src : str):
@@ -103,11 +103,14 @@ class SourceVersionStrategy(MongoEntityInterface):
     def to_mongo_dict(self) -> dict:
         return {self.version_key : self.version_value}
 
-@dataclass
+@dataclass(init=False)
 class GitCommitStrategy(SourceVersionStrategy):
 
-    version_key = "git_commit_id"
-    version_value = None
+    version_key : str = "git_commit_id"
+    version_value : str = None
+    
+    def __init__(self) -> None:
+        self.version_key = "git_commit_id"
 
     def apply_strategy(self, real_src_path: str):
         self.version_value = git_commit_strategy(real_src_path)
@@ -117,11 +120,14 @@ class GitCommitStrategy(SourceVersionStrategy):
         return super().to_mongo_dict()
 
     
-@dataclass 
+@dataclass(init=False)
 class SHA1Strategy(SourceVersionStrategy):
 
-    version_key = "sha1_id"
-    version_value = None
+    version_key : str = "sha1_id"
+    version_value : str = None
+
+    def __init__(self) -> None:
+        self.version_key = "sha1_id"
 
     def apply_strategy(self, real_src_path: str):
         self.version_value = hash_strategy(real_src_path)
@@ -258,7 +264,7 @@ def find_real_source_file(src_path : str, app_build_dir : str, lib_name : str) -
     return real_src_path
 
 
-def instrument_source(parsed_compilation_blocks : list[CompilationBlock], src_path):
+def instrument_source(parsed_compilation_blocks : list[CompilationBlock], src_path : str):
 
     '''
     Add a #warning directive at the start of every compilation block so that we can see what blocks are triggered during a compilation.
@@ -267,7 +273,7 @@ def instrument_source(parsed_compilation_blocks : list[CompilationBlock], src_pa
 
     Args:
         parsed_compilation_blocks(list[CompilationBlock]): List of compilation blocks found in the source file
-        copy_src_path(str): Absolute path of the source file
+        src_path(str): Absolute path of the source file
 
     Returns:
         None
@@ -345,7 +351,6 @@ def get_source_compilation_command(app_build_dir : str, lib_name : str, real_src
         
     return None
 
-
 def try_compilers_for_src_path(command : str, o_cmd_file_abs_path : str) -> str | None:
 
 
@@ -360,4 +365,3 @@ def try_compilers_for_src_path(command : str, o_cmd_file_abs_path : str) -> str 
             return src_path
         
     return None
-

@@ -10,10 +10,12 @@ import os
 import time
 import json
 import logging
+import subprocess
 USER_EMAIL = os.environ["COVERITY_SCRAPER_USER_EMAIL"]
 USER_PASS = os.environ["COVERITY_SCRAPER_PASS"]
 PROJECT_NAME = os.environ["COVERITY_PROJECT_NAME"]
 FIREFOX_PATH = "/usr/bin/firefox"
+COVERITY_SUBMIT_TOKEN = os.environ["COVERITY_SUBMIT_TOKEN"]
 
 # TODO configure paths for GitHub Actions
 firefox_path = "/home/karakitay/Desktop/firefox/firefox"
@@ -37,22 +39,10 @@ class CoverityAPI(object):
 
     def prepare_defects_for_db(self, defect : dict, compilation_tag : str, app_path : str) -> dict:
 
-        # the root path in Coverity defects is mainly the application path (since this is where the cov-build tools starts analysis)
-        # and global path if the path is outside the app path:
-        # ex: /build/main.c -> defect in ~/.unikraft/apps/random-app/build (we need to bring it to ~/.unikraft/apps/random-app/main.c)
-        # ex: ~/.unikraft/unikraft/blabla.c (is outside application path)
-        # let's bring all path relative to UK_WORKDIR
+        
+        # just remove the / from the beggining of the path, Coverity adds its since the archive submited is considered to be the whole filesystem
 
-        uk_root = os.environ["UK_WORKDIR"]
-
-        # this means that the the file is in the app_path
-        if uk_root not in defect['displayFile']:
-            logger.info(f"Found defect inside a source file in {app_path}\nOriginal : {defect['displayFile']}\nUnified : {app_path + defect['displayFile']}")
-            defect['displayFile'] = app_path + defect['displayFile']
-
-
-        defect['displayFile'] = os.path.relpath(defect['displayFile'], uk_root)
-        defect.update({"compilation_tag" : compilation_tag})
+        defect['displayFile'] = defect['displayFile'][1 : ]
 
         return defect
     
@@ -70,13 +60,13 @@ class CoverityAPI(object):
         sign_in_button = self.browser.find_element(By.NAME, "commit")
         sign_in_button.click()
 
-        print("Authentication OK")
+        logger.info("Coverity authentication OK")
 
         self.browser.find_element(By.LINK_TEXT, PROJECT_NAME).click()
-        print("Entering project overview OK")
+        logger.info("Entering project overview OK")
 
         self.browser.find_element(By.XPATH,"//a[@href='/projects/unikraft-scanning/view_defects']").click()
-        print("Entering defects tab OK")
+        logger.info("Entering defects tab OK")
         
         original_window = self.browser.current_window_handle
         WebDriverWait(self.browser, 40).until(EC.number_of_windows_to_be(2))
@@ -92,12 +82,13 @@ class CoverityAPI(object):
         self.browser.get("https://scan9.scan.coverity.com/#/project-view/54998/15201") 
 
         for request in self.browser.requests:
-            print(request.url)
+            logger.info(request.url)
             if request.url == "https://scan9.scan.coverity.com/reports/table.json?projectId=15201&viewId=54998":
                 if request.response:
                     body_raw = decode(request.response.body, request.response.headers.get('Content-Encoding', 'identity'))
                     body = body_raw.decode()
                     response_json = json.loads(body)
+                    logger.debug(response_json)
                     return response_json["resultSet"]["results"]
         return None
     
@@ -120,4 +111,28 @@ class CoverityAPI(object):
         time.sleep(5)
         logger.warning("Check the most recent build submition failed. No request with information in response header found. Retrying ...")
         return False
+    
+    def submit_build(self, app_path : str, pipeline : bool) -> bool:
+        
+        upload_script_path = os.getcwd() + "/.."
+
+        if pipeline == True:
+            job = f"{upload_script_path}/upload.sh --pipeline {app_path}"
+        else:
+            job = f"{upload_script_path}/upload.sh --manual {app_path}"
+
+        submit_proc = subprocess.Popen(job, shell=True, stdout=subprocess.PIPE)
+
+        out, err = submit_proc.communicate()
+
+        print(out)
+
+        print(err)
+
+        submit_proc.terminate()
+
+        if err != "" or err != None:
+            return False
+
+        return True
                     

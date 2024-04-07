@@ -1,0 +1,5 @@
+{
+    "logfile": "./coverage_logs.log",
+    "outfile": "./coverage_out.ansi",
+    "verbose": 1
+}
