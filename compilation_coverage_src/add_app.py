@@ -381,10 +381,31 @@ def insert_defects_in_db(cov_defects : list[AbstractLineDefect], compilation_tag
                     }
                 )
 
-def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_path : str):
+def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_path : str, compile_cmd : str):
 
     global db
 
+    # Coverity won't build an archive because no emitted compilations are intercepted by the cov-build tool
+    # this means that a Unikraft app should not have been compiled before or make sure that before running this tool
+    # you remove the .unikraft directory
+    # we first build the archive, wait for Coverity analysis and fetch defects from the platform
+    # since the other part (analyzing source files) requires a previous compilation beforehand
+    
+    coverity : CoverityAPI = CoverityAPI()
+
+    print(coverity.fetch_raw_defects())
+    
+    exit(0)
+
+    coverity.submit_build(app_path, compile_cmd, pipeline=False)
+
+    while coverity.check_submition(compilation_tag) == False:
+        continue
+
+    # get the Coverity defects, cache them until we finish analyzing source files
+    cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(coverity.prepare_defects_for_db(d, compilation_tag, app_path)), coverity.fetch_raw_defects()))
+
+    # analyze source files
     for (current_lib, _, uk_files) in os.walk(app_build_dir, topdown=True):
 
         for file in uk_files:
@@ -416,16 +437,6 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
                     app_build_dir=app_build_dir,
                     src_path=src_path
                 )
-
-    coverity : CoverityAPI = CoverityAPI()
-
-    coverity.submit_build(app_path, pipeline=False)
-
-    while coverity.check_submition(compilation_tag) == False:
-        continue
-
-    # get the Coverity defects and insert them in a table
-    cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(coverity.prepare_defects_for_db(d, compilation_tag, app_path)), coverity.fetch_raw_defects()))
 
     insert_defects_in_db(cov_defects, compilation_tag)
 
@@ -484,9 +495,15 @@ def analyze_application_sources_v1(compilation_tag : str, app_build_dir : str, a
 
     insert_defects_in_db(cov_defects, compilation_tag)
 
-def add_app_subcommand(app_dir : str, app_build_dir : str, compilation_tag : str, app_format : str):
+def add_app_subcommand(app_dir : str, app_build_dir : str, compilation_tag : str, app_format : str, compile_cmd : str):
 
     global db
+
+    coverity : CoverityAPI = CoverityAPI()
+
+    print(coverity.fetch_raw_defects())
+
+    exit(0)
 
     if not os.path.exists(f"{app_dir}/.coverage"):
         os.mkdir(f"{app_dir}/.coverage")
@@ -510,4 +527,4 @@ def add_app_subcommand(app_dir : str, app_build_dir : str, compilation_tag : str
     ).inserted_id
     logger.debug(f"New compilation has now id {compilation_id}")
 
-    analyze_application_sources(compilation_tag, app_build_dir, app_dir)
+    analyze_application_sources(compilation_tag, app_build_dir, app_dir, compile_cmd)

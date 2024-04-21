@@ -19,11 +19,9 @@ import status
 
 from helpers.helpers import find_app_format
 
-default_log_file = "./coverage_logs.log"
-default_out_file = "./coverage_out.ansi"
-saved_verbose = None
-saved_logfile = None
-saved_outfile = None
+class RunMode(Enum):
+    LOCAL = "local"
+    PIPELINE = "pipeline"
 
 db = pymongo.MongoClient("mongodb://localhost:27017/")
 
@@ -33,45 +31,16 @@ def main():
         description="Compilation coverage tool for Unikraft. To be used with Coverity to detect new unscanned code regions"
     )
 
+    parser.add_argument(
+        "-p",
+        "--profile"
+        action="store",
+        help="Configuration profile used chosen from various profiles stored in config.yaml"
+        required=True
+        type=str
+    )
     
     subparser = parser.add_subparsers(dest='operations', help='Available operations')
-    
-    init_parser = subparser.add_parser(
-        description="Initialize log stream and output stream of the tool",
-        name="init",
-        help="Initialize log stream and output stream of the tool"
-    )
-
-    init_parser.add_argument(
-        "-l",
-        "--logfile",
-        required=False,
-        action="store",
-        help="Log file path. If not specified, logs will be printed at coverage_logs.txt in the current path",
-        default=default_log_file,
-        type=str
-    )
-
-    init_parser.add_argument(
-        '-v',
-        '--verbose', 
-        required=False, 
-        action='store', 
-        help='Verbose mode, 5 = CRITICAL, 1 =  DEBUG. Default is CRITICAL', 
-        choices=range(1,6), 
-        default=5, 
-        type=int
-    )
-
-    init_parser.add_argument(
-        '-o',
-        '--outfile', 
-        required=False, 
-        action='store', 
-        help='Where to put output. Default is coverage_out.txt in the current path', 
-        default=default_out_file, 
-        type=str
-    )
 
     app_parser = subparser.add_parser(
         description='App-related operations such as registering an app compilation etc.', 
@@ -137,6 +106,14 @@ def main():
         help="A new unique tag/description that identifies an app's compilation process"
     )
 
+    add_app_parser.add_argument(
+        '-c',
+        '--compile',
+        required=True,
+        action='store',
+        help='Kraft compilation command used for the targeted app'
+    )
+
     list_app_parser = app_sub_parser.add_parser(
         description="List all apps and their compilation process",
         name="list",
@@ -164,36 +141,16 @@ def main():
     )
 
     args = parser.parse_args()
-    
-    if args.operations == "init":
-        with open("./cache.json", "w") as conf:
-            import json
-            info = json.dumps(
-                {
-                    "logfile" : args.logfile,
-                    "outfile" : args.outfile,
-                    "verbose" : args.verbose
-                },
-                indent=4
-            )
-            conf.write(info)
-        return
-    else:
-        with open("./cache.json", "r") as conf:
-            import json
-            info = json.load(conf)
-            saved_verbose = info["verbose"]
-            saved_logfile = info["logfile"]
-            saved_outfile = info["outfile"]
-        
 
+    configs = check_config_integrity(args)
+    
 
     # config logging
     FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
-    logging.basicConfig(level=saved_verbose * 10, format=FORMAT, filename=saved_logfile)
+    logging.basicConfig(level=configs['verbose'] * 10, format=FORMAT, filename=configs['logfile'])
 
     # print banner
-    with open(saved_outfile,"a") as out:
+    with open(configs['logfile'],"a") as out:
         out.writelines("----------------------------------------------------------------------------------------------------\n")
         out.writelines(Back.CYAN + Fore.MAGENTA + "-----------------COVERAGE TOOL SESSION-----------------\n" + Fore.RESET + Back.RESET)
         out.writelines(f"-----------------------------------------------{time.ctime()}------------------------------------------")
@@ -205,18 +162,34 @@ def main():
         if args.app_operations == "add":
             build_dir = args.app + "/.unikraft/build" if args.build == None else args.build
             app_format = find_app_format(args.app) if args.format == None else args.format
-            add_app.add_app_subcommand(args.app, build_dir, args.tag, app_format)
+            add_app.add_app_subcommand(args.app, build_dir, args.tag, app_format, args.compile)
 
         if args.app_operations == "list":
-            list_app.list_app_subcommand(saved_outfile)
+            list_app.list_app_subcommand(configs['outfile'])
 
         if args.app_operations == "view":
-            view_app.view_app_subcommand(args.tags, saved_outfile)
+            view_app.view_app_subcommand(args.tags, configs['outfile'])
 
     elif args.operations == "status":
-        status.status_subcommand(saved_outfile, args.path)
+        status.status_subcommand(configs['outfile'], args.path)
     else:
         logging.critical("Unknown " + str(args.operations) + " operation")
+
+
+def check_config_integrity(args) -> dict:
+
+    import yaml
+
+    with open("config.yaml") as f:
+        config = yaml.safe_load(f)
+
+    info_profile = [info for info in config['profiles'] if info['name'] == args.p]
+
+    if info_profile == []:
+        raise Exception(f"No profile found in config.yaml for {args.p}")
+    
+    return info_profile
+
 
     
 
