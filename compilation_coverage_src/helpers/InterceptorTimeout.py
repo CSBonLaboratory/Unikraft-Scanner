@@ -1,0 +1,2 @@
+class InterceptorTimeout(TimeoutError):
+    pass
