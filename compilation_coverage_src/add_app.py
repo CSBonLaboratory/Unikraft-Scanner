@@ -13,6 +13,8 @@ from helpers.helpers import (
     get_source_compilation_command,
     instrument_source
 )
+
+from helpers.InterceptorTimeout import InterceptorTimeout
 from helpers.CompilationBlock import CompilationBlock
 from helpers.CSourceDocument import CSourceDocument
 from helpers.helpers import SourceStatus, SourceVersionStrategy, GitCommitStrategy, SHA1Strategy
@@ -22,8 +24,7 @@ from bson.objectid import ObjectId
 from pymongo import ReturnDocument
 from defects.AbstractLineDefect import AbstractLineDefect
 from defects.CoverityDefect import CoverityDefect
-from functools import reduce
-from collections import namedtuple
+from selenium.common.exceptions import TimeoutException
 
 DATABASE = coverage.DATABASE
 SOURCES_COLLECTION = coverage.SOURCES_COLLECTION
@@ -32,6 +33,17 @@ COMPILATION_COLLECTION = coverage.COMPILATION_COLLECTION
 db = coverage.db
 
 logger = logging.getLogger(__name__)
+
+def panic_delete_compilation(compilation_tag : str):
+
+    global db
+
+    db[DATABASE][COMPILATION_COLLECTION].find_one_and_delete(
+        {"tag" : compilation_tag} 
+    )
+
+    return
+
 
 def is_new_source(src_path : str, app_path : str) -> SourceStatus:
 
@@ -298,13 +310,13 @@ def insert_defects_in_db(cov_defects : list[AbstractLineDefect], compilation_tag
                 }
             )
             
-            
             if source_document_dict == None:
-                logger.critical(f"No such source {defect.source_path} featured in defect {defect.to_mongo_dict()}")
+                logger.critical(f"No such source {defect.source_path} featured in defect {defect.to_mongo_dict()}. Ignore this defect and do not add in db")
+                return
 
             source_document = CSourceDocument(source_document_dict)
 
-            logger.debug(f"-------------------- Starting inserting defect in {source_document.source_path} ---------------------")
+            logger.debug(f"-------------------- Start inserting defect in {source_document.source_path} ---------------------")
 
             # artificial CompilationBlock root (which includes the entire source file) that contains all real CompilationBlock roots
             root_block = CompilationBlock(
@@ -393,24 +405,54 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
     
     coverity : CoverityAPI = CoverityAPI()
 
-    print(coverity.fetch_raw_defects())
-    
-    exit(0)
+    if not coverity.submit_build(app_path, compile_cmd, pipeline=False):
+        panic_delete_compilation(compilation_tag)
+        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since submition of compiled files to Coverity failed")
+        exit(1)
 
-    coverity.submit_build(app_path, compile_cmd, pipeline=False)
+    # busy wait until the most recent snapshot is the one that has been uploaded now
+    try:
+        while coverity.check_recent_snapshot(compilation_tag) == False:
+            continue
+    # authentication failed before fetching the most recent snapshot
+    except TimeoutException:
+        panic_delete_compilation(compilation_tag)
+        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since authentication failed")
+        exit(2)
+    # timeout during waiting for the interceptor to catch a request containg any data about the snapshots no matter if the data is correct or not
+    except InterceptorTimeout:
+        panic_delete_compilation(compilation_tag)
+        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since request interceptor for recent snapshot got timeout")
+        exit(3)
 
-    while coverity.check_submition(compilation_tag) == False:
-        continue
+    # we waited for the most recent snapshot to be the one resulted from the current file submition
+    # now get the defects found 
+    try:
+        coverity.fetch_and_cache_recent_defects()
+    # authentication or web interaction (clicking the most recent snapshot cell)
+    except TimeoutException:
+        panic_delete_compilation(compilation_tag)
+        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since authentication or double click interaction with the most recent snapshot cell")
+        exit(4)
+    except InterceptorTimeout:
+        panic_delete_compilation(compilation_tag)
+        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since request for defects got timeout")
+        exit(5)
+
 
     # get the Coverity defects, cache them until we finish analyzing source files
-    cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(coverity.prepare_defects_for_db(d, compilation_tag, app_path)), coverity.fetch_raw_defects()))
+    cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(coverity.prepare_defects_for_db(d, compilation_tag, app_path)), coverity.cached_last_defect_results))
+    
+    # we do not need these cached results anymore, maybe we can save some memory
+    del coverity.cached_last_defect_results
+    del coverity.cached_recent_snapshot
 
     # analyze source files
     for (current_lib, _, uk_files) in os.walk(app_build_dir, topdown=True):
 
         for file in uk_files:
             
-            # first filter, get *.o.cmd, kconfig has same format of files but are weird
+            # first filter, get *.o.cmd, kconfig directory has same format of files but are weird
             if file[-6 : ] == ".o.cmd" and current_lib.split("/")[-1] != "kconfig":
                 
                 logger.debug("........................................................................")
@@ -439,92 +481,3 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
                 )
 
     insert_defects_in_db(cov_defects, compilation_tag)
-
-
-
-def analyze_application_sources_v1(compilation_tag : str, app_build_dir : str, app_path : str):
-
-    # DEPRECATED !!!!
-
-    global rootTrie, db
-
-    # get all source file using the make print-srcs
-    logger.debug(app_path)
-    proc = subprocess.Popen(f"cd {app_path} && make print-srcs", shell=True, stdout=subprocess.PIPE)
-
-    stdout_raw, stderr_raw = proc.communicate()
-
-    # TODO: additional replace() calls for the Makefile temporary fix when having "/bin/bash Argument list too long error"
-    make_stdout = stdout_raw.decode().replace("'", "").replace("\\n", "\n").replace("\\t", "\t").replace("\\", "")
-    #make_stderr = stderr_raw.decode()
-
-    # try to find at least a lib and all sources on the next line, if not delete the compilation from the db
-    lib_str_match = re.search("\s*([a-zA-Z0-9_-]+:)\s*\n\s*(.*)\n", make_stdout)
-
-    if lib_str_match == None:
-        logger.critical("No lib or app source file dependencies found. Maybe `make print-srcs` was not called correctly")
-        db[DATABASE][COMPILATION_COLLECTION].find_one_and_delete({"tag" : compilation_tag})
-        exit(1)
-
-
-    for lib_and_srcs_match in re.finditer("\s*([a-zA-Z0-9_-]+):\s*\n\s*(.*)\n", make_stdout):
-
-        # match the first group -> [a-zA-Z_]
-        lib_name = lib_and_srcs_match.group(1)
-
-        # match the second group which is the next line after libblabla with source file paths -> .*
-        srcs_line = lib_and_srcs_match.group(2)
-
-        for src_path_raw in srcs_line.split(" "):
-            src_path = src_path_raw.split("|")[0]
-
-            if src_path[-2:] == ".c":
-                logger.debug(f"---------------------{src_path}------------------------------------")
-
-                get_source_compile_coverage(
-                    compilation_tag= compilation_tag, 
-                    lib_name= lib_name, 
-                    app_build_dir= app_build_dir, 
-                    src_path= src_path
-                )
-
-    coverity = CoverityAPI()
-
-    # get the Coverity defects and insert them in a table
-    cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(coverity.prepare_defects_for_db(d, compilation_tag, app_path)), coverity.fetch_raw_defects()))
-
-    insert_defects_in_db(cov_defects, compilation_tag)
-
-def add_app_subcommand(app_dir : str, app_build_dir : str, compilation_tag : str, app_format : str, compile_cmd : str):
-
-    global db
-
-    coverity : CoverityAPI = CoverityAPI()
-
-    print(coverity.fetch_raw_defects())
-
-    exit(0)
-
-    if not os.path.exists(f"{app_dir}/.coverage"):
-        os.mkdir(f"{app_dir}/.coverage")
-
-    # check if an identic compilation occured
-    existing_compilation = db[DATABASE][COMPILATION_COLLECTION].find_one(
-                    {"tag" : compilation_tag}
-        )
-    if existing_compilation != None:
-        logger.critical(f"An existing compilation has been previously registered with this tag and app\n{existing_compilation}")
-        return
-    
-    logger.info(f"No compilation has been found. Proceeding with analyzing source {app_dir}")
-
-    compilation_id : ObjectId = db[DATABASE][COMPILATION_COLLECTION].insert_one(
-        {
-            "tag" : compilation_tag,
-            "app": app_dir,
-            "format" : app_format
-        }
-    ).inserted_id
-    logger.debug(f"New compilation has now id {compilation_id}")
-
-    analyze_application_sources(compilation_tag, app_build_dir, app_dir, compile_cmd)
