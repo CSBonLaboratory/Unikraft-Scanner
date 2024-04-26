@@ -3,7 +3,6 @@ import subprocess
 import logging
 import os
 import re
-import logging
 import hashlib
 from bson.objectid import ObjectId
 from dataclasses import dataclass
@@ -151,7 +150,8 @@ def get_source_version_info(real_src_path : str) -> SourceVersionStrategy:
         A SourceVersionStrategy instance for this file
     '''
 
-    logger = logging.getLogger(__name__)
+    from coverage import LOGGER_NAME
+    logger = logging.getLogger(LOGGER_NAME)
 
     latest_commit_id = git_commit_strategy(real_src_path)
     
@@ -179,8 +179,8 @@ def trigger_compilation_blocks(activation_cmd : str) -> list[int]:
     Returns:
         A list of indexes of compilation blocks which were activated after rerunning the command.
     '''
-
-    logger = logging.getLogger(__name__)
+    from coverage import LOGGER_NAME
+    logger = logging.getLogger(LOGGER_NAME)
 
     proc = subprocess.Popen(activation_cmd, shell=True, stderr = subprocess.PIPE)
 
@@ -203,7 +203,9 @@ def trigger_compilation_blocks(activation_cmd : str) -> list[int]:
 
 def find_real_source_file(src_path : str, app_build_dir : str, lib_name : str) -> str:
 
-    logger = logging.getLogger(__name__)
+
+    from coverage import LOGGER_NAME
+    logger = logging.getLogger(LOGGER_NAME)
 
     # copy the source so that after the code instrumentation of the original files, we swap back to the starting version
     # something like file swaping
@@ -322,7 +324,8 @@ def get_source_compilation_command(app_build_dir : str, lib_name : str, real_src
 
     src_file_name = real_src_path.split("/")[-1]
 
-    logger = logging.getLogger(__name__)
+    from coverage import LOGGER_NAME
+    logger = logging.getLogger(LOGGER_NAME)
 
     for compile_command_file in os.listdir(f"{app_build_dir}/{lib_name}"):
 

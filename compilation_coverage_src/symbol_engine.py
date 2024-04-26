@@ -2,8 +2,6 @@ from __future__ import annotations
 import logging
 from helpers.helpers import remove_comments
 from helpers.CompilationBlock import CompilationBlock
-from typing import Union
-
 
 def find_children(total_blocks : list[CompilationBlock]):
 
@@ -70,8 +68,8 @@ def find_compilation_blocks_and_lines(src_path : str, do_remove_comments : bool)
         A tuple where the first element is a list of CompilationBlock instances and 
         the second is the number of lines that are compiled no matter what symbols are used (universal)
     '''
-
-    logger = logging.getLogger(__name__)
+    from coverage import LOGGER_NAME
+    logger = logging.getLogger(LOGGER_NAME)
 
     if do_remove_comments:
         remove_comments(src_path)

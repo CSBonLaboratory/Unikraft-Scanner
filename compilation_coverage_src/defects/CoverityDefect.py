@@ -14,15 +14,17 @@ class CoverityDefect(AbstractLineDefect):
     others : dict
 
     def __init__(self, cov_dict : dict) -> None:
+
+        super().__init__()
         
         self.source_path = cov_dict['displayFile']
 
         self.compilation_tag = cov_dict['compilation_tag']
 
         if cov_dict['lineNumber'] == "Various":
-            self.line_number == -1
+            self.line_number = -1
         else:
-            self.line_number == int(cov_dict['lineNumber'])
+            self.line_number = int(cov_dict['lineNumber'])
 
         self.impact = cov_dict['displayImpact']
         self.category = cov_dict['displayCategory']

@@ -3,7 +3,8 @@ import pymongo
 import os
 from SourceTrie import SourceTrie
 from helpers.CSourceDocument import CSourceDocument
-logger = logging.getLogger(__name__)
+from coverage import LOGGER_NAME
+logger = logging.getLogger(LOGGER_NAME)
 
 
 def view_app_subcommand(compilation_tags : list[str], out_file_name : str):

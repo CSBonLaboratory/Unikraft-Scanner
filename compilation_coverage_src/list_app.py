@@ -1,7 +1,8 @@
 import logging
 from colorama import Fore
+from coverage import LOGGER_NAME
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(LOGGER_NAME)
 
 def get_app_coverage(compilation_tag : str) -> tuple[int, ...]:
 

@@ -11,6 +11,7 @@ from enum import Enum
 DATABASE = "unikraft"
 SOURCES_COLLECTION = "sources"
 COMPILATION_COLLECTION = "compilations"
+LOGGER_NAME = "uk_compile_coverage_logger"
 
 import add_app
 import list_app
@@ -18,6 +19,7 @@ import view_app
 import status
 
 from helpers.helpers import find_app_format
+from helpers.helpers import AppFormat
 
 class RunMode(Enum):
     LOCAL = "local"
@@ -29,15 +31,6 @@ def main():
 
     parser = argparse.ArgumentParser(
         description="Compilation coverage tool for Unikraft. To be used with Coverity to detect new unscanned code regions"
-    )
-
-    parser.add_argument(
-        "-p",
-        "--profile"
-        action="store",
-        help="Configuration profile used chosen from various profiles stored in config.yaml"
-        required=True
-        type=str
     )
     
     subparser = parser.add_subparsers(dest='operations', help='Available operations')
@@ -55,12 +48,19 @@ def main():
     )
 
     status_parser.add_argument(
-        "-p",
-        "--path",
-        required=False,
+        "-k",
+        "--kernel-path",
+        required=True,
         action="store",
-        help="Absolute path from which source files will be searched recursively for showing compilation statistics. Default value is UK_WORKDIR",
-        default=os.environ["UK_WORKDIR"]
+        help="Absolute path from which source files will be searched recursively for showing compilation statistics."
+    )
+
+    status_parser.add_argument(
+        '-p',
+        '--profile',
+        required=True,
+        action='store',
+        help='Name of the profile foudn in the config.yaml which includes the required configuration options.'
     )
     
     app_sub_parser = app_parser.add_subparsers(dest="app_operations", help="Available app-related operations")
@@ -76,8 +76,18 @@ def main():
         '--build',
         required=False,
         action='store',
-        help='Build directory of the Unikraft application. Default value is the build directory in the app workspace',
+        help='Build directory of the Unikraft application. Default value is the .unikraft directory in the app workspace (-a option)',
+        type=str,
         default=None
+    )
+
+    add_app_parser.add_argument(
+        '-p',
+        '--profile',
+        required=True,
+        action='store',
+        help='Name of the profile foudn in the config.yaml which includes the required configuration options.',
+        type=str
     )
 
     add_app_parser.add_argument(
@@ -85,8 +95,8 @@ def main():
         "--format",
         required=False,
         action='store',
-        help="Type of Unikraft app. It must be native or thorugh binary compatibility of elfloader. If it is not present, this tool will automatically find its type",
-        choices=["native", "bincompat"]
+        help="Type of Unikraft app. It must be native or through binary compatibility of elfloader. If it is not present, this tool will automatically find its type",
+        choices=[f.name for f in AppFormat]
     )
 
     add_app_parser.add_argument(
@@ -94,7 +104,7 @@ def main():
         '--app',
         required=False,
         action='store',
-        help='App path which will run with Unikraft',
+        help='App path which will run with Unikraft. This is considered to be the app workspace.',
         default=None
     )
 
@@ -103,7 +113,7 @@ def main():
         '--tag', 
         required=True, 
         action='store', 
-        help="A new unique tag/description that identifies an app's compilation process"
+        help="A new unique tag/description that identifies an app's compilation process."
     )
 
     add_app_parser.add_argument(
@@ -111,13 +121,20 @@ def main():
         '--compile',
         required=True,
         action='store',
-        help='Kraft compilation command used for the targeted app'
+        help='Kraft compilation command used for the targeted app.'
     )
 
     list_app_parser = app_sub_parser.add_parser(
         description="List all apps and their compilation process",
         name="list",
-        help="List all apps and their compilation proces"
+        help="List all apps and their compilation process."
+    )
+
+    list_app_parser.add_argument(
+        '-p',
+        '--profile',
+        required=True,
+        help='Name of the profile foudn in the config.yaml which includes the required configuration options.'
     )
 
     view_app_parser = app_sub_parser.add_parser(
@@ -134,6 +151,13 @@ def main():
         help="A list of existing compilation tags (delimited by whitespace) that you want to visualize together"
     )
 
+    view_app_parser.add_argument(
+        '-p',
+        '--profile',
+        required=True,
+        help='Name of the profile foudn in the config.yaml which includes the required configuration options.'
+    )
+
     delete_app_parser = app_sub_parser.add_parser(
         description="Delete a specific app and its analysis statistics",
         name="delete",
@@ -144,10 +168,12 @@ def main():
 
     configs = check_config_integrity(args)
     
-
-    # config logging
-    FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
-    logging.basicConfig(level=configs['verbose'] * 10, format=FORMAT, filename=configs['logfile'])
+    logger = logging.getLogger(LOGGER_NAME)
+    logger.setLevel(configs['verbose'] * 10)
+    log_fh = logging.FileHandler(configs['logfile'])
+    log_format = logging.Formatter("[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s")
+    log_fh.setFormatter(log_format)
+    logger.addHandler(log_fh)
 
     # print banner
     with open(configs['logfile'],"a") as out:
@@ -162,7 +188,7 @@ def main():
         if args.app_operations == "add":
             build_dir = args.app + "/.unikraft/build" if args.build == None else args.build
             app_format = find_app_format(args.app) if args.format == None else args.format
-            add_app.add_app_subcommand(args.app, build_dir, args.tag, app_format, args.compile)
+            add_app.add_app_subcommand(args.app, build_dir, args.tag, app_format, args.compile, configs)
 
         if args.app_operations == "list":
             list_app.list_app_subcommand(configs['outfile'])
@@ -173,22 +199,24 @@ def main():
     elif args.operations == "status":
         status.status_subcommand(configs['outfile'], args.path)
     else:
-        logging.critical("Unknown " + str(args.operations) + " operation")
+        logger.critical("Unknown " + str(args.operations) + " operation")
 
 
 def check_config_integrity(args) -> dict:
 
     import yaml
 
-    with open("config.yaml") as f:
+    with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)
 
-    info_profile = [info for info in config['profiles'] if info['name'] == args.p]
+    
+
+    info_profile = [info for info in config['profiles'] if info['name'] == args.profile]
 
     if info_profile == []:
-        raise Exception(f"No profile found in config.yaml for {args.p}")
+        raise Exception(f"No profile found in config.yaml for {args.profile}")
     
-    return info_profile
+    return info_profile[0]
 
 
     

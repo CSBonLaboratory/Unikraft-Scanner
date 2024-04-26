@@ -5,8 +5,9 @@ from helpers.CSourceNoDocument import CSourceNoDocument
 from symbol_engine import find_compilation_blocks_and_lines
 from SourceTrie import SourceTrie
 from functools import reduce
+from coverage import LOGGER_NAME
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(LOGGER_NAME)
 
 def status_subcommand(saved_outfile : str, target_dir : str):
 

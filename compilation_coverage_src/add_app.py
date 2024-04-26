@@ -17,7 +17,7 @@ from helpers.helpers import (
 from helpers.InterceptorTimeout import InterceptorTimeout
 from helpers.CompilationBlock import CompilationBlock
 from helpers.CSourceDocument import CSourceDocument
-from helpers.helpers import SourceStatus, SourceVersionStrategy, GitCommitStrategy, SHA1Strategy
+from helpers.helpers import SourceStatus, SourceVersionStrategy, GitCommitStrategy, SHA1Strategy, AppFormat
 from CoverityAPI import CoverityAPI
 import coverage
 from bson.objectid import ObjectId
@@ -32,7 +32,7 @@ COMPILATION_COLLECTION = coverage.COMPILATION_COLLECTION
 
 db = coverage.db
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(coverage.LOGGER_NAME)
 
 def panic_delete_compilation(compilation_tag : str):
 
@@ -254,7 +254,7 @@ def get_source_compile_coverage(compilation_tag : str, lib_name : str, app_dir :
     rel_src_path = os.path.relpath(src_path, app_dir)
 
     # very important !! the source file is copied before code instrumentation, later it will be back to its initial form
-    copy_source_path = f"{app_dir}/.coverage/{rel_src_path}"
+    copy_source_path = f"{app_dir}/.coverage/copies/{rel_src_path}"
     os.makedirs(os.path.dirname(copy_source_path), exist_ok=True)
     shutil.copy(src_path, copy_source_path)
 
@@ -393,7 +393,7 @@ def insert_defects_in_db(cov_defects : list[AbstractLineDefect], compilation_tag
                     }
                 )
 
-def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_path : str, compile_cmd : str):
+def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_path : str, compile_cmd : str, configs : dict):
 
     global db
 
@@ -403,17 +403,25 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
     # we first build the archive, wait for Coverity analysis and fetch defects from the platform
     # since the other part (analyzing source files) requires a previous compilation beforehand
     
-    coverity : CoverityAPI = CoverityAPI()
+    coverity : CoverityAPI = CoverityAPI(configs)
 
-    if not coverity.submit_build(app_path, compile_cmd, pipeline=False):
-        panic_delete_compilation(compilation_tag)
-        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since submition of compiled files to Coverity failed")
-        exit(1)
+    # if not coverity.submit_build(app_path, compile_cmd, configs['mode'], compilation_tag):
+    #     panic_delete_compilation(compilation_tag)
+    #     logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since submition of compiled files to Coverity failed")
+    #     exit(1)
 
     # busy wait until the most recent snapshot is the one that has been uploaded now
+    current_snapshot_retries = 0
     try:
-        while coverity.check_recent_snapshot(compilation_tag) == False:
+        while current_snapshot_retries < configs['coverityAPI']['recentSnapshotRetries'] and coverity.check_recent_snapshot(compilation_tag) == False:
+            logger.warning(f"Retry finding uploaded build in the snapshots:  {current_snapshot_retries}/{configs['coverityAPI']['recentSnapshotRetries']}")
+            current_snapshot_retries += 1
             continue
+
+        if current_snapshot_retries == configs['coverityAPI']['recentSnapshotRetries']:
+            panic_delete_compilation(compilation_tag)
+            logger.critical(f"All {current_snapshot_retries} retries for finding recent snapshot used.")
+            exit(6)
     # authentication failed before fetching the most recent snapshot
     except TimeoutException:
         panic_delete_compilation(compilation_tag)
@@ -428,7 +436,7 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
     # we waited for the most recent snapshot to be the one resulted from the current file submition
     # now get the defects found 
     try:
-        coverity.fetch_and_cache_recent_defects()
+        coverity.fetch_and_cache_recent_defects(compilation_tag)
     # authentication or web interaction (clicking the most recent snapshot cell)
     except TimeoutException:
         panic_delete_compilation(compilation_tag)
@@ -441,12 +449,13 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
 
 
     # get the Coverity defects, cache them until we finish analyzing source files
-    cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(coverity.prepare_defects_for_db(d, compilation_tag, app_path)), coverity.cached_last_defect_results))
+    cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(coverity.prepare_defects_for_db(d, compilation_tag)), coverity.cached_last_defect_results))
     
     # we do not need these cached results anymore, maybe we can save some memory
     del coverity.cached_last_defect_results
     del coverity.cached_recent_snapshot
 
+    exit(0)
     # analyze source files
     for (current_lib, _, uk_files) in os.walk(app_build_dir, topdown=True):
 
@@ -481,3 +490,29 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
                 )
 
     insert_defects_in_db(cov_defects, compilation_tag)
+
+def add_app_subcommand(app_workspace : str, app_build_dir : str, compilation_tag : str, app_format : str, compile_command : str, configs : dict):
+
+    global db
+
+    # check if an identic compilation occured
+
+    existing_compilation = db[DATABASE][COMPILATION_COLLECTION].find_one(
+                    {"tag" : compilation_tag}
+        )
+    if existing_compilation != None:
+        logger.critical(f"An existing compilation has been previously registered with this tag and app\n{existing_compilation}")
+        return
+    
+    logger.info(f"No compilation has been found. Proceeding with analyzing source {app_workspace}")
+
+    compilation_id : ObjectId = db[DATABASE][COMPILATION_COLLECTION].insert_one(
+        {
+            "tag" : compilation_tag,
+            "app": app_workspace,
+            "format" : app_format
+        }
+    ).inserted_id
+    logger.debug(f"New compilation has now id {compilation_id}")
+
+    analyze_application_sources(compilation_tag, app_build_dir, app_workspace, compile_command, configs)
