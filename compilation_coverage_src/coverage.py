@@ -209,8 +209,6 @@ def check_config_integrity(args) -> dict:
     with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)
 
-    
-
     info_profile = [info for info in config['profiles'] if info['name'] == args.profile]
 
     if info_profile == []:

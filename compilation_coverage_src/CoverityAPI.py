@@ -133,7 +133,7 @@ class CoverityAPI(object):
             cls.instance : CoverityAPI = super(CoverityAPI, cls).__new__(cls)
 
             cls.instance.log_file = configs['logfile']
-            cls.instance.upload_token = configs['coverityAPI']['uploadToken']
+            cls.instance.upload_token = os.environ[configs['coverityAPI']['uploadTokenEnv']]
             
             cls.instance.options = Options()
             cls.instance.options.binary_location = configs["coverityAPI"]["firefoxPath"]
@@ -207,6 +207,8 @@ class CoverityAPI(object):
     
     def check_recent_snapshot(self, compilation_tag : str) -> bool:
 
+        import time
+
         if not self.is_auth:
             logger.warning("Authenticating before checking the most recent snapshot")
             try:
@@ -227,6 +229,46 @@ class CoverityAPI(object):
         
         logger.debug(f"Access {self.snapshots_url} in order to get snapshots resultSet")
         browser.get(self.snapshots_url)
+
+        logger.debug("Click on `Login with saml`")
+        try:
+            login_saml_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/div[1]/div[2]/form/ul/li[4]/ul/li/a')))
+            login_saml_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on `Login with saml` button")
+            raise te
+        
+        logger.debug("Clicked in `Login with saml`. Next choose project from the project view")
+        time.sleep(1)
+
+        try:
+            unikraft_project = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/cim-root/cim-shell/div/cim-reports/div/div/cim-projects-grid/cim-data-table/angular-slickgrid/div/div/div[4]/div[3]/div/div/div[1]/span/a')))
+            unikraft_project.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on the Unikraft scanning project")
+            raise te
+        
+        logger.debug("Clicked on the Unikraft scanning project. Next click on more options burger menu")
+        time.sleep(1)
+
+        try:
+            more_options = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="views-button"]')))
+            more_options.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on more options burger button")
+            raise te
+
+        logger.debug("Clicked on more options. Next choose `All in snpashot` option")
+        time.sleep(1)
+
+        try:
+            all_in_snapshot = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.CSS_SELECTOR, f"a[href='#/project-view/{self.snapshots_view_id}/{self.project_id}']")))
+            all_in_snapshot.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on the `All in snapshot option`")
+            raise te
+        
+        logger.debug("Clicked on `All in snapshot` option")
 
         # wait until the interceptor finds the response that contains the snapshot details
         with self.interceptor_condition:
