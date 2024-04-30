@@ -405,10 +405,10 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
     
     coverity : CoverityAPI = CoverityAPI(configs)
 
-    # if not coverity.submit_build(app_path, compile_cmd, configs['mode'], compilation_tag):
-    #     panic_delete_compilation(compilation_tag)
-    #     logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since submition of compiled files to Coverity failed")
-    #     exit(1)
+    if not coverity.submit_build(app_path, compile_cmd, compilation_tag):
+        panic_delete_compilation(compilation_tag)
+        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since submition of compiled files to Coverity failed")
+        exit(1)
 
     # busy wait until the most recent snapshot is the one that has been uploaded now
     current_snapshot_retries = 0
@@ -416,7 +416,6 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
         while current_snapshot_retries < configs['coverityAPI']['recentSnapshotRetries'] and coverity.check_recent_snapshot(compilation_tag) == False:
             logger.warning(f"Retry finding uploaded build in the snapshots:  {current_snapshot_retries}/{configs['coverityAPI']['recentSnapshotRetries']}")
             current_snapshot_retries += 1
-            continue
 
         if current_snapshot_retries == configs['coverityAPI']['recentSnapshotRetries']:
             panic_delete_compilation(compilation_tag)
@@ -455,7 +454,6 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
     del coverity.cached_last_defect_results
     del coverity.cached_recent_snapshot
 
-    exit(0)
     # analyze source files
     for (current_lib, _, uk_files) in os.walk(app_build_dir, topdown=True):
 

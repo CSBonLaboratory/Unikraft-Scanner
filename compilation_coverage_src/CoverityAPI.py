@@ -19,6 +19,7 @@ from threading import Condition
 from enum import Enum
 from coverage import LOGGER_NAME
 import re
+import shutil
 
 
 
@@ -38,6 +39,9 @@ class DefectsStates(Enum):
 
 
 def dummy_request_interceptor(request : Request):
+    return
+
+def dummy_response_interceptor(request : Request, response : Response):
     return
 
 def recent_snapshot_response_interceptor(request : Request, response : Response):
@@ -93,7 +97,8 @@ def defects_response_interceptor(request : Request, response : Response):
 
             coverityAPI.cached_last_defect_results = json.loads(decode(response.body, response.headers.get('Content-Encoding', 'identity')))['resultSet']['results']
 
-            logger.debug(f"Found last defects {coverityAPI.cached_last_defect_results}")
+            for raw_defect in coverityAPI.cached_last_defect_results:
+                logger.debug(raw_defect)
 
             coverityAPI.defects_state = DefectsStates.FOUND
 
@@ -126,6 +131,10 @@ class CoverityAPI(object):
     is_auth : bool
     log_file : str
     upload_token : str
+    user_email : str
+    project_name : str
+    retry_snapshot : bool
+    snapshot_polling_seconds : int
 
     def __new__(cls, configs : dict | None) -> None:
         if not hasattr(cls, 'instance') and configs != None:
@@ -134,6 +143,11 @@ class CoverityAPI(object):
 
             cls.instance.log_file = configs['logfile']
             cls.instance.upload_token = os.environ[configs['coverityAPI']['uploadTokenEnv']]
+            cls.instance.user_email = os.environ[configs["coverityAPI"]['userEmailEnv']]
+            cls.instance.project_name = configs['coverityAPI']['projectName']
+
+            cls.instance.retry_snapshot = False
+            cls.instance.snapshot_polling_seconds = configs["coverityAPI"]['snapshotPollingSeconds']
             
             cls.instance.options = Options()
             cls.instance.options.binary_location = configs["coverityAPI"]["firefoxPath"]
@@ -158,8 +172,6 @@ class CoverityAPI(object):
             # this url is accessible and will trigger a request to the second one which contains defects data for the selected snapshot
             cls.instance.defects_url = f"https://scan9.scan.coverity.com/#/project-view/{cls.instance.defects_view_id}/{cls.instance.project_id}"
             cls.instance.defects_table_url = f"https://scan9.scan.coverity.com/reports/table.json?projectId={cls.instance.project_id}&viewId={cls.instance.defects_view_id}"
-
-            
 
             cls.instance.scraper_wait = configs["coverityAPI"]["scraperWaitSeconds"]
             cls.instance.project_overview_url = configs["coverityAPI"]["projectOverviewURL"]
@@ -229,44 +241,47 @@ class CoverityAPI(object):
         
         logger.debug(f"Access {self.snapshots_url} in order to get snapshots resultSet")
         browser.get(self.snapshots_url)
-
-        logger.debug("Click on `Login with saml`")
-        try:
-            login_saml_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/div[1]/div[2]/form/ul/li[4]/ul/li/a')))
-            login_saml_button.click()
-        except TimeoutException as te:
-            logger.critical("Cannot click on `Login with saml` button")
-            raise te
         
-        logger.debug("Clicked in `Login with saml`. Next choose project from the project view")
-        time.sleep(1)
+        # the first time we try to access snapshot view, we need to get through additional pages (Login with SAML, etc)
+        if not self.retry_snapshot:
 
-        try:
-            unikraft_project = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/cim-root/cim-shell/div/cim-reports/div/div/cim-projects-grid/cim-data-table/angular-slickgrid/div/div/div[4]/div[3]/div/div/div[1]/span/a')))
-            unikraft_project.click()
-        except TimeoutException as te:
-            logger.critical("Cannot click on the Unikraft scanning project")
-            raise te
-        
-        logger.debug("Clicked on the Unikraft scanning project. Next click on more options burger menu")
-        time.sleep(1)
+            logger.debug("Click on `Login with saml`")
+            try:
+                login_saml_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/div[1]/div[2]/form/ul/li[4]/ul/li/a')))
+                login_saml_button.click()
+            except TimeoutException as te:
+                logger.critical("Cannot click on `Login with saml` button")
+                raise te
+            
+            logger.debug("Clicked in `Login with saml`. Next choose project from the project view")
+            time.sleep(1)
 
-        try:
-            more_options = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="views-button"]')))
-            more_options.click()
-        except TimeoutException as te:
-            logger.critical("Cannot click on more options burger button")
-            raise te
+            try:
+                unikraft_project = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/cim-root/cim-shell/div/cim-reports/div/div/cim-projects-grid/cim-data-table/angular-slickgrid/div/div/div[4]/div[3]/div/div/div[1]/span/a')))
+                unikraft_project.click()
+            except TimeoutException as te:
+                logger.critical("Cannot click on the Unikraft scanning project")
+                raise te
+            
+            logger.debug("Clicked on the Unikraft scanning project. Next click on more options burger menu")
+            time.sleep(1)
 
-        logger.debug("Clicked on more options. Next choose `All in snpashot` option")
-        time.sleep(1)
+            try:
+                more_options = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="views-button"]')))
+                more_options.click()
+            except TimeoutException as te:
+                logger.critical("Cannot click on more options burger button")
+                raise te
 
-        try:
-            all_in_snapshot = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.CSS_SELECTOR, f"a[href='#/project-view/{self.snapshots_view_id}/{self.project_id}']")))
-            all_in_snapshot.click()
-        except TimeoutException as te:
-            logger.critical("Cannot click on the `All in snapshot option`")
-            raise te
+            logger.debug("Clicked on more options. Next choose `All in snapshot` option")
+            time.sleep(1)
+
+            try:
+                all_in_snapshot = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.CSS_SELECTOR, f"a[href='#/project-view/{self.snapshots_view_id}/{self.project_id}']")))
+                all_in_snapshot.click()
+            except TimeoutException as te:
+                logger.critical("Cannot click on the `All in snapshot option`")
+                raise te
         
         logger.debug("Clicked on `All in snapshot` option")
 
@@ -283,10 +298,24 @@ class CoverityAPI(object):
             # reinit the state of the snapshots interceptor maybe for further use
             self.recent_snapshot_state = RecentSnapshotStates.NOT_STARTED
 
+            # stop interceptor so that we do not pollute the log file too much
+            self.browser.response_interceptor = dummy_response_interceptor
+            logger.debug("RECENT SNAPSHOT: Interceptor stopped")
+
         if self.cached_recent_snapshot['snapshotDescription'] != compilation_tag:
             logger.warning(f"Recent snapshot has compilation tag \"{self.cached_recent_snapshot['snapshotDescription']}\", expected \"{compilation_tag}\". Needs retrying.")
+
+            # as long as this tool is running we do not need to put retry_snapshot to False anymore since the browser instance will be always open during runtime
+            # and the browser caches the previous login
+            self.retry_snapshot = True
+
+            # the build has not been analyzed yet, we need to wait before retrying to get the most recent snpashot containing the build
+            time.sleep(self.snapshot_polling_seconds)
             return False
+        else:
+            logger.warning(f"Found uploaded snapshot with tag {compilation_tag}")
         
+
         return True
 
     def fetch_and_cache_recent_defects(self, compilation_tag : str) -> None:
@@ -438,49 +467,52 @@ class CoverityAPI(object):
 
     def submit_build(self, app_path : str, compile_cmd : str, compilation_tag : str) -> bool:
         
+        if os.path.exists(f"{app_path}/.unikraft"):
+            logger.warning("Detected already built app. Removing the .unikraft directory")
+            shutil.rmtree(f"{app_path}/.unikraft")
+
         upload_script_path = os.getcwd() + "/.."
 
-        # make this env vars in order to pass them to the upload.sh script
-        os.environ['UK_COV_APP_COMPILE_CMD'] = compile_cmd
-        os.environ['UK_COV_APP_PATH'] = app_path
-        os.environ['UK_COV_LOG_FILE'] = self.log_file
-        os.environ['UK_COV_UPLOAD_TOKEN'] = self.upload_token
-        os.environ['UK_COV_DESCRIPTION'] = compilation_tag
+        job = f"{upload_script_path}/upload.sh {app_path} \"{compile_cmd}\" {self.upload_token} {self.user_email} \"{compilation_tag}\" \"{self.project_name}\" >> {self.log_file}"
 
-        job = f"{upload_script_path}/upload.sh"
+        logger.debug(f"Executing upload job: {upload_script_path}/upload.sh")
 
-        logger.debug(f"Passing environment parameters to upload script:\n {os.environ['UK_COV_APP_COMPILE_CMD']}\n{os.environ['UK_COV_APP_PATH']}\n")
+        submit_proc = subprocess.Popen(job, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        logger.debug(f"Executing upload job: {job}")
+        _, err_raw = submit_proc.communicate()
 
-        submit_proc = subprocess.Popen(job, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=os.environ)
-
-        out_raw, err_raw = submit_proc.communicate()
-
-        out = out_raw.decode()
         err = err_raw.decode()
         
         submit_proc.terminate()
 
-        logger.info(out)
         logger.warning(err)
-
-        with open(f"{app_path}/.cov-build-logs.txt", "rt") as f:
-            cov_build_logs = f.read()
-            f.close()
-        
-        logger.debug(cov_build_logs)
-
-        os.remove(f"{app_path}/.cov-build-logs.txt")
 
         if "No files were emitted." in err:
             logger.critical("The app was previously compiled. Remove the .unikraft directory and try again")
             return False
+        
+        compilation_success_msg = "C/C++ compilation units (100%) are ready for analysis"
 
-        elif "C/C++ compilation units (100%) are ready for analysis" not in cov_build_logs:
-            logger.critical("The app has compilation issues. All files presented in the kraft configuration should be able to be compiled")
+        # search through the log file for compilation status, accept only 100% compilation ratio
+        compile_status_proc = subprocess.Popen(f'grep \"{compilation_success_msg}\" {self.log_file}', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = compile_status_proc.communicate()
+        if out == b'':
+            logger.critical(f"The app has compilation issues. The compilation ration should be 100% in order to you the compilation coverage tool")
             return False
+        if err != b'':
+            logger.warning(f"Error warning while grep-ing for 100% compile ration:\n{err.decode()}")
         
-        
+        # Coverity limits the number of builds you upload
+        quota_msg = "The build submission quota for this project has been reached."
+        quota_reached_proc = subprocess.Popen(f'grep \"{quota_msg}\" {self.log_file}', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out,err = quota_reached_proc.communicate()
+        if out != b'':
+            logger.critical("Quota for Coverity submited builds reached. Try again next time")
+            logger.critical(out)
+            return False
+        if err != b'':
+            logger.warning(f"Error warning while grep-ing for reached quota:\n{err.decode()}")
+            
+
         return True
                     

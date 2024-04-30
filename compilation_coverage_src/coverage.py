@@ -3,8 +3,8 @@
 import argparse
 import pymongo
 import logging
-import os
 import time
+import yaml
 from colorama import Fore, Back
 from enum import Enum
 
@@ -204,8 +204,6 @@ def main():
 
 def check_config_integrity(args) -> dict:
 
-    import yaml
-
     with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)
 
@@ -217,7 +215,6 @@ def check_config_integrity(args) -> dict:
     return info_profile[0]
 
 
-    
 
 if __name__ == "__main__":
     main()
