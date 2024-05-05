@@ -20,6 +20,7 @@ from enum import Enum
 from coverage import LOGGER_NAME
 import re
 import shutil
+import time
 
 
 
@@ -46,14 +47,15 @@ def dummy_response_interceptor(request : Request, response : Response):
 
 def recent_snapshot_response_interceptor(request : Request, response : Response):
 
-    coverityAPI = CoverityAPI(None)
+    coverityAPI : CoverityAPI = CoverityAPI(None)
 
     if coverityAPI.recent_snapshot_state in [RecentSnapshotStates.NOT_STARTED, RecentSnapshotStates.FOUND]:
         logger.debug(f"RECENT SNAPSHOT: Ignoring {request.url} for recent snapshot since state is {coverityAPI.recent_snapshot_state.name}")
         return
 
     logger.debug(f"RECENT SNAPSHOT: Investigating {request.url}")
-
+    
+    # this is used in the rest of the time to poll for the submited build as a snapshot, knowing the snapshot view id and project view id
     if request.url == coverityAPI.snapshots_table_url:
         logger.debug(f"RECENT SNAPSHOT: Found snapshot table at {request.url}")
         with coverityAPI.interceptor_condition:
@@ -85,13 +87,13 @@ def defects_response_interceptor(request : Request, response : Response):
         return
     
     logger.debug(f"RECENT DEFECTS: Investigating {request.url}")
-    current_defect_view_match = re.search(r"https://scan9\.scan\.coverity\.com/reports/table\.json\?projectId=(\d+)&viewId=(\d+)", request.url)
+    current_defect_view_match = re.match(r"https://scan9\.scan\.coverity\.com/reports/table\.json\?projectId=(\d+)&viewId=(\d+)", request.url)
 
     if current_defect_view_match:
         
-        coverityAPI.defects_copy_view_id = current_defect_view_match.group(2)
+        coverityAPI.current_defects_view_id = current_defect_view_match.group(2)
 
-        logger.debug(f"RECENT DEFECTS: Found copy of the defects view with id {coverityAPI.defects_copy_view_id} at {request.url}")
+        logger.debug(f"RECENT DEFECTS: Found copy of the defects view with id {coverityAPI.current_defects_view_id} at {request.url}")
 
         with coverityAPI.interceptor_condition:
 
@@ -118,10 +120,7 @@ class CoverityAPI(object):
     snapshots_url : str
     snapshots_table_url : str
     snapshots_view_id : int
-    defects_url : str
-    defects_table_url : str
-    defects_view_id : int
-    defects_copy_view_id : int
+    current_defects_view_id : int
     recent_snapshot_state : RecentSnapshotStates
     defects_state : DefectsStates
     interceptor_condition : Condition
@@ -133,7 +132,7 @@ class CoverityAPI(object):
     upload_token : str
     user_email : str
     project_name : str
-    retry_snapshot : bool
+    unknown_snapshot : bool
     snapshot_polling_seconds : int
 
     def __new__(cls, configs : dict | None) -> None:
@@ -146,7 +145,7 @@ class CoverityAPI(object):
             cls.instance.user_email = os.environ[configs["coverityAPI"]['userEmailEnv']]
             cls.instance.project_name = configs['coverityAPI']['projectName']
 
-            cls.instance.retry_snapshot = False
+            cls.instance.unknown_snapshot = True
             cls.instance.snapshot_polling_seconds = configs["coverityAPI"]['snapshotPollingSeconds']
             
             cls.instance.options = Options()
@@ -161,30 +160,12 @@ class CoverityAPI(object):
             cls.instance.recent_snapshot_state = RecentSnapshotStates.NOT_STARTED
             cls.instance.defects_state = DefectsStates.NOT_STARTED
 
-            cls.instance.snapshots_view_id = configs["coverityAPI"]["snapshotsViewId"]
-            cls.instance.project_id = configs["coverityAPI"]["projectId"]
-            cls.instance.defects_view_id = configs["coverityAPI"]["defectsViewId"]
-
-            # this url is accessible and will trigger a request to the second one which contains snapshots data
-            cls.instance.snapshots_url = f"https://scan9.scan.coverity.com/#/project-view/{cls.instance.snapshots_view_id}/{cls.instance.project_id}"
-            cls.instance.snapshots_table_url = f"https://scan9.scan.coverity.com/reports/table.json?projectId={cls.instance.project_id}&viewId={cls.instance.snapshots_view_id}"
-
-            # this url is accessible and will trigger a request to the second one which contains defects data for the selected snapshot
-            cls.instance.defects_url = f"https://scan9.scan.coverity.com/#/project-view/{cls.instance.defects_view_id}/{cls.instance.project_id}"
-            cls.instance.defects_table_url = f"https://scan9.scan.coverity.com/reports/table.json?projectId={cls.instance.project_id}&viewId={cls.instance.defects_view_id}"
-
             cls.instance.scraper_wait = configs["coverityAPI"]["scraperWaitSeconds"]
             cls.instance.project_overview_url = configs["coverityAPI"]["projectOverviewURL"]
 
             cls.instance.interceptor_timeout = configs["coverityAPI"]["interceptorTimeoutSeconds"]
 
             cls.instance.is_auth = False
-
-            logger.debug(f"SNAPSHOT TABLE URL: {cls.instance.snapshots_table_url}")
-            logger.debug(f"SNAPSHOTS URL: {cls.instance.snapshots_url}")
-
-            logger.debug(f"DEFECTS TABLE URL: {cls.instance.defects_table_url}")
-            logger.debug(f"DEFECTS URL: {cls.instance.defects_url}")
 
         return cls.instance
     
@@ -217,9 +198,7 @@ class CoverityAPI(object):
 
         return defect
     
-    def check_recent_snapshot(self, compilation_tag : str) -> bool:
-
-        import time
+    def poll_recent_snapshot(self, compilation_tag : str | None) -> bool:
 
         if not self.is_auth:
             logger.warning("Authenticating before checking the most recent snapshot")
@@ -231,59 +210,69 @@ class CoverityAPI(object):
 
         browser = self.browser
         
-        logger.debug("Start intercepting for snapshot resultSet response")
-
-        # init interceptor response body which contains all snapshots information
-        self.recent_snapshot_state = RecentSnapshotStates.STARTED_BUT_NOT_FOUND
-        browser.response_interceptor = recent_snapshot_response_interceptor
+        if compilation_tag != None:
+            logger.debug("Start intercepting for snapshot resultSet response")
+        else:
+            logger.debug("Start searching for snapshots view id and project view id as the first step")
         
         browser.switch_to.new_window('tab')
+
+        coverity_project_name = self.project_overview_url.split("/")[-1].split("?")[0]
+
+        coverity_view_defects_url = f"https://scan.coverity.com/projects/{coverity_project_name}/view_defects"
+
+        browser.get(coverity_view_defects_url)
+
+        logger.info(f"Request GET for {coverity_view_defects_url} for snapshot investigation")
+
+        try:
+            more_options = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="views-button"]')))
+            more_options.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on more options burger button")
+            raise te
+
+        logger.debug("Clicked on more options. Next choose `All in project` snapshots option")
+        time.sleep(1)
+
+        try:
+            # "All in project" snapshot button should be searched by CSS instead of XPATH, sicne users cand add other buttons before it and break the XPATH ordering
+            all_in_snapshot = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, "/html/body/cim-root/cim-shell/div/cim-sidebar/nav/div/div[9]/div/ul/li[1]/div/a")))
+
+            # this is the first time calling this function so we need to find the snapshot view id and project view id
+            if self.unknown_snapshot:
+                all_in_snapshot_element = browser.find_element(By.XPATH, "/html/body/cim-root/cim-shell/div/cim-sidebar/nav/div/div[9]/div/ul/li[1]/div/a")
+
+                snapshots_href = all_in_snapshot_element.get_attribute("href")
+                
+                self.project_id = snapshots_href.split("/")[-1]
+
+                self.snapshots_view_id = snapshots_href.split("/")[-2]
+
+                self.unknown_snapshot = False
+
+                logger.info(f"Snapshot view id is {self.snapshots_view_id} and project view id is {self.project_id}")
+
+                # this url is accessible and will trigger a request to the second one which contains snapshots data
+                self.snapshots_url = f"https://scan9.scan.coverity.com/#/project-view/{self.snapshots_view_id}/{self.project_id}"
+                self.snapshots_table_url = f"https://scan9.scan.coverity.com/reports/table.json?projectId={self.project_id}&viewId={self.snapshots_view_id}"
+
+
+                return True
+
+            # init interceptor which will search for snapshot information in the response body
+            else:
+                self.recent_snapshot_state = RecentSnapshotStates.STARTED_BUT_NOT_FOUND
+                browser.response_interceptor = recent_snapshot_response_interceptor
+
+            all_in_snapshot.click()
+
+            logger.debug("Clicked on `All in project` snapshot option")
+
+        except TimeoutException as te:
+            logger.critical("Cannot click on the `All in project` snapshot option")
+            raise te
         
-        logger.debug(f"Access {self.snapshots_url} in order to get snapshots resultSet")
-        browser.get(self.snapshots_url)
-        
-        # the first time we try to access snapshot view, we need to get through additional pages (Login with SAML, etc)
-        if not self.retry_snapshot:
-
-            logger.debug("Click on `Login with saml`")
-            try:
-                login_saml_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/div[1]/div[2]/form/ul/li[4]/ul/li/a')))
-                login_saml_button.click()
-            except TimeoutException as te:
-                logger.critical("Cannot click on `Login with saml` button")
-                raise te
-            
-            logger.debug("Clicked in `Login with saml`. Next choose project from the project view")
-            time.sleep(1)
-
-            try:
-                unikraft_project = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/cim-root/cim-shell/div/cim-reports/div/div/cim-projects-grid/cim-data-table/angular-slickgrid/div/div/div[4]/div[3]/div/div/div[1]/span/a')))
-                unikraft_project.click()
-            except TimeoutException as te:
-                logger.critical("Cannot click on the Unikraft scanning project")
-                raise te
-            
-            logger.debug("Clicked on the Unikraft scanning project. Next click on more options burger menu")
-            time.sleep(1)
-
-            try:
-                more_options = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="views-button"]')))
-                more_options.click()
-            except TimeoutException as te:
-                logger.critical("Cannot click on more options burger button")
-                raise te
-
-            logger.debug("Clicked on more options. Next choose `All in snapshot` option")
-            time.sleep(1)
-
-            try:
-                all_in_snapshot = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.CSS_SELECTOR, f"a[href='#/project-view/{self.snapshots_view_id}/{self.project_id}']")))
-                all_in_snapshot.click()
-            except TimeoutException as te:
-                logger.critical("Cannot click on the `All in snapshot option`")
-                raise te
-        
-        logger.debug("Clicked on `All in snapshot` option")
 
         # wait until the interceptor finds the response that contains the snapshot details
         with self.interceptor_condition:
@@ -302,12 +291,12 @@ class CoverityAPI(object):
             self.browser.response_interceptor = dummy_response_interceptor
             logger.debug("RECENT SNAPSHOT: Interceptor stopped")
 
+        if compilation_tag == None:
+            logger.debug("Initial polling OK. Finished finding snapshot view id and project view id")
+            return True
+        
         if self.cached_recent_snapshot['snapshotDescription'] != compilation_tag:
             logger.warning(f"Recent snapshot has compilation tag \"{self.cached_recent_snapshot['snapshotDescription']}\", expected \"{compilation_tag}\". Needs retrying.")
-
-            # as long as this tool is running we do not need to put retry_snapshot to False anymore since the browser instance will be always open during runtime
-            # and the browser caches the previous login
-            self.retry_snapshot = True
 
             # the build has not been analyzed yet, we need to wait before retrying to get the most recent snpashot containing the build
             time.sleep(self.snapshot_polling_seconds)
@@ -317,6 +306,9 @@ class CoverityAPI(object):
         
 
         return True
+    
+    def init_snapshot_and_project_views(self):
+        self.poll_recent_snapshot(None)
 
     def fetch_and_cache_recent_defects(self, compilation_tag : str) -> None:
         
@@ -460,10 +452,8 @@ class CoverityAPI(object):
                 
             # reinit the state of the defects interceptor maybe for further use
             self.defects_state = DefectsStates.NOT_STARTED
-        
-
+            
         return
-
 
     def submit_build(self, app_path : str, compile_cmd : str, compilation_tag : str) -> bool:
         

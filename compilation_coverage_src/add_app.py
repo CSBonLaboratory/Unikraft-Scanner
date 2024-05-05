@@ -397,62 +397,23 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
 
     global db
 
-    # Coverity won't build an archive because no emitted compilations are intercepted by the cov-build tool
-    # this means that a Unikraft app should not have been compiled before or make sure that before running this tool
-    # you remove the .unikraft directory
-    # we first build the archive, wait for Coverity analysis and fetch defects from the platform
-    # since the other part (analyzing source files) requires a previous compilation beforehand
+    # main  logic to register a new compilation
+    # 1.first we compile to Unikraft app using the coverity tools
+    # 2.submit the build to the Coverity platform
+    # 3.while the platofrm is analyzing it, recompile every source individually in order to include source file data in the database (such as compile blocks)
+    # 4.wait for the Coverity build to be analyzed
+    # 5.fetch Coverity defects and insert them in the database
     
+    # first end-to-end compilation and build submition to Coverity
     coverity : CoverityAPI = CoverityAPI(configs)
 
-    if not coverity.submit_build(app_path, compile_cmd, compilation_tag):
-        panic_delete_compilation(compilation_tag)
-        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since submition of compiled files to Coverity failed")
-        exit(1)
-
-    # busy wait until the most recent snapshot is the one that has been uploaded now
-    current_snapshot_retries = 0
-    try:
-        while current_snapshot_retries < configs['coverityAPI']['recentSnapshotRetries'] and coverity.check_recent_snapshot(compilation_tag) == False:
-            logger.warning(f"Retry finding uploaded build in the snapshots:  {current_snapshot_retries}/{configs['coverityAPI']['recentSnapshotRetries']}")
-            current_snapshot_retries += 1
-
-        if current_snapshot_retries == configs['coverityAPI']['recentSnapshotRetries']:
-            panic_delete_compilation(compilation_tag)
-            logger.critical(f"All {current_snapshot_retries} retries for finding recent snapshot used.")
-            exit(6)
-    # authentication failed before fetching the most recent snapshot
-    except TimeoutException:
-        panic_delete_compilation(compilation_tag)
-        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since authentication failed")
-        exit(2)
-    # timeout during waiting for the interceptor to catch a request containg any data about the snapshots no matter if the data is correct or not
-    except InterceptorTimeout:
-        panic_delete_compilation(compilation_tag)
-        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since request interceptor for recent snapshot got timeout")
-        exit(3)
-
-    # we waited for the most recent snapshot to be the one resulted from the current file submition
-    # now get the defects found 
-    try:
-        coverity.fetch_and_cache_recent_defects(compilation_tag)
-    # authentication or web interaction (clicking the most recent snapshot cell)
-    except TimeoutException:
-        panic_delete_compilation(compilation_tag)
-        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since authentication or double click interaction with the most recent snapshot cell")
-        exit(4)
-    except InterceptorTimeout:
-        panic_delete_compilation(compilation_tag)
-        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since request for defects got timeout")
-        exit(5)
-
-
-    # get the Coverity defects, cache them until we finish analyzing source files
-    cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(coverity.prepare_defects_for_db(d, compilation_tag)), coverity.cached_last_defect_results))
+    # if not coverity.submit_build(app_path, compile_cmd, compilation_tag):
+    #     panic_delete_compilation(compilation_tag)
+    #     logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since submition of compiled files to Coverity failed")
+    #     exit(1)
     
-    # we do not need these cached results anymore, maybe we can save some memory
-    del coverity.cached_last_defect_results
-    del coverity.cached_recent_snapshot
+    # used to scrape crucial metadata for further fetching defects
+    coverity.init_snapshot_and_project_views()
 
     # analyze source files
     for (current_lib, _, uk_files) in os.walk(app_build_dir, topdown=True):
@@ -486,6 +447,53 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
                     app_build_dir=app_build_dir,
                     src_path=src_path
                 )
+
+    # busy wait until the most recent snapshot is the one that has been uploaded now
+    current_snapshot_retries = 0
+    try:
+        while current_snapshot_retries < configs['coverityAPI']['recentSnapshotRetries'] and coverity.poll_recent_snapshot(compilation_tag) == False:
+            logger.warning(f"Retry finding uploaded build in the snapshots:  {current_snapshot_retries}/{configs['coverityAPI']['recentSnapshotRetries']}")
+            current_snapshot_retries += 1
+
+        if current_snapshot_retries == configs['coverityAPI']['recentSnapshotRetries']:
+            panic_delete_compilation(compilation_tag)
+            logger.critical(f"All {current_snapshot_retries} retries for finding recent snapshot used.")
+            exit(6)
+
+    # authentication failed before fetching the most recent snapshot
+    except TimeoutException:
+        panic_delete_compilation(compilation_tag)
+        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since authentication failed")
+        exit(2)
+
+    # timeout during waiting for the interceptor to catch a request containg any data about the snapshots no matter if the data is correct or not
+    except InterceptorTimeout:
+        panic_delete_compilation(compilation_tag)
+        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since request interceptor for recent snapshot got timeout")
+        exit(3)
+
+    # we waited for the most recent snapshot to be the one resulted from the current file submition
+    # now get the defects found 
+    try:
+        coverity.fetch_and_cache_recent_defects(compilation_tag)
+
+    # authentication or web interaction (clicking the most recent snapshot cell)
+    except TimeoutException:
+        panic_delete_compilation(compilation_tag)
+        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since authentication or double click interaction with the most recent snapshot cell")
+        exit(4)
+
+    except InterceptorTimeout:
+        panic_delete_compilation(compilation_tag)
+        logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since request for defects got timeout")
+        exit(5)
+
+    # get the Coverity defects, cache them until we finish analyzing source files
+    cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(coverity.prepare_defects_for_db(d, compilation_tag)), coverity.cached_last_defect_results))
+    
+    # we do not need these cached results anymore, maybe we can save some memory
+    del coverity.cached_last_defect_results
+    del coverity.cached_recent_snapshot
 
     insert_defects_in_db(cov_defects, compilation_tag)
 
