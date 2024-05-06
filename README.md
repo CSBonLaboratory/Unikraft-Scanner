@@ -9,6 +9,8 @@ The issue of compilation coverage and not having a way to visualize what code re
 
 # Core Concepts
 
+![Alt text](docs/unikraft_scanner_tool_general.png)
+
 
 
 # Prerequisites And Configuration
