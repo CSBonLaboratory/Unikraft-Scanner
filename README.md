@@ -10,6 +10,8 @@ This tool provides features such visualizing (using a similar output of the `tre
 
 In addition, this tool can find blocks of code under `#if`, `#elif`, `#else`, `#ifndef`, `#ifdef` statements that can also change the compilation coverage (for example Unikraft Scanner found that a source file is involved in the compilation process but we are not sure if the all of it is compiled since there may be unsatisfied preprocessing condition statements).
 
+A snapshot of how the compilation/scanning status is presented can be seen in the image below (green means compiled code, red otherwise).
+
 ![Alt text](docs/result_coverage.jpg)
 
 The issue of compilation coverage and not having a way to visualize what code regions of the Unikraft codebase are analyzed, is shown below.
