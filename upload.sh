@@ -24,5 +24,5 @@ cov-build --dir cov-int $compile_cmd
 
 tar czvf analysis_input.tgz cov-int
 curl --form token="$upload_token" --form email=$user_email --form "file=@./analysis_input.tgz" --form version=1 --form description="$compilation_tag" https://scan.coverity.com/builds?project=$project_name
-rm analysis_input.tgz
-rm -r cov-int
+#rm analysis_input.tgz
+#rm -r cov-int
