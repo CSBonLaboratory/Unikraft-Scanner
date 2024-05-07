@@ -52,15 +52,7 @@ def main():
         "--kernel-path",
         required=True,
         action="store",
-        help="Absolute path from which source files will be searched recursively for showing compilation statistics."
-    )
-
-    status_parser.add_argument(
-        '-p',
-        '--profile',
-        required=True,
-        action='store',
-        help='Name of the profile foudn in the config.yaml which includes the required configuration options.'
+        help="Absolute path from which source files will be searched recursively for showing global compilation statistics."
     )
     
     app_sub_parser = app_parser.add_subparsers(dest="app_operations", help="Available app-related operations")
@@ -82,12 +74,11 @@ def main():
     )
 
     add_app_parser.add_argument(
-        '-p',
-        '--profile',
+        '-s',
+        "--settings",
         required=True,
         action='store',
-        help='Name of the profile foudn in the config.yaml which includes the required configuration options.',
-        type=str
+        help='Path to the configuration file.'  
     )
 
     add_app_parser.add_argument(
@@ -131,10 +122,11 @@ def main():
     )
 
     list_app_parser.add_argument(
-        '-p',
-        '--profile',
+        '-s',
+        "--settings",
         required=True,
-        help='Name of the profile foudn in the config.yaml which includes the required configuration options.'
+        action='store',
+        help='Path to the configuration file.'  
     )
 
     view_app_parser = app_sub_parser.add_parser(
@@ -152,10 +144,11 @@ def main():
     )
 
     view_app_parser.add_argument(
-        '-p',
-        '--profile',
+        '-s',
+        "--settings",
         required=True,
-        help='Name of the profile foudn in the config.yaml which includes the required configuration options.'
+        action='store',
+        help='Path to the configuration file.'  
     )
 
     delete_app_parser = app_sub_parser.add_parser(
@@ -164,9 +157,18 @@ def main():
         help="Delete a specific app and its analysis statistics"
     )
 
+    delete_app_parser.add_argument(
+        '-s',
+        "--settings",
+        required=True,
+        action='store',
+        help='Path to the configuration file.'  
+    )
+
     args = parser.parse_args()
 
-    configs = check_config_integrity(args)
+    with open(args.settings) as config_fd:
+        configs = yaml.safe_load(config_fd)
     
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(configs['verbose'] * 10)
@@ -200,19 +202,6 @@ def main():
         status.status_subcommand(configs['outfile'], args.path)
     else:
         logger.critical("Unknown " + str(args.operations) + " operation")
-
-
-def check_config_integrity(args) -> dict:
-
-    with open("config.yaml", "r") as f:
-        config = yaml.safe_load(f)
-
-    info_profile = [info for info in config['profiles'] if info['name'] == args.profile]
-
-    if info_profile == []:
-        raise Exception(f"No profile found in config.yaml for {args.profile}")
-    
-    return info_profile[0]
 
 
 

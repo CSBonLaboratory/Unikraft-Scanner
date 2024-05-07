@@ -4,7 +4,7 @@ version: 1
 #' Path to the log file
 logfile: "./coverage_log.log"
 
-#' Path to the out file which will contain results from various oeprations such as global status listing and application coverage view
+#' Path to the out file which will contain results from various operations such as global status listing and application coverage view
 outfile: "./coverage_out.ansi"
 
 #' Level of verbosity for logging: 1 - DEBUG, 2 - INFO, 3 - WARNING, 4 - ERROR, 5 - CRITICAL
