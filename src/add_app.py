@@ -147,7 +147,7 @@ def update_db_activated_compile_blocks(activated_block_counters : list[int], rel
 
     return updated_source_document
 
-def init_source_in_db(source_status : SourceStatus, src_path : str, rel_src_path : str, total_blocks : list[CompilationBlock], universal_lines : int, compilation_tag : str, lib_name : str) -> bool:
+def init_source_in_db(source_status : SourceStatus, src_path : str, rel_src_path : str, total_blocks : list[CompilationBlock], universal_lines : int, compilation_tag : str, lib_name : str):
     '''
     Creates a new document in db for a new source file, or updates an existing source file that has been modified.
 
@@ -160,8 +160,8 @@ def init_source_in_db(source_status : SourceStatus, src_path : str, rel_src_path
         total_blocks(list[CompilationBlocks]): List of CompilationBlocks instances found in the source file
         universal_lines(int): Number of lines that are compiled no matter what symbols are used
 
-    Returns:
-        bool: Wheter or not it created(for new sources) or updated(for deprecated sources) a document in the db
+    Throws:
+        `Exception` object if status of the source is neither SourceStatus.NEW nor SourceStatus.DEPRECATED
 
     '''
     global db
@@ -214,9 +214,8 @@ def init_source_in_db(source_status : SourceStatus, src_path : str, rel_src_path
         logger.debug(f"AFTER source update due to deprecated commit {updated_source_document}")
     else:
         logger.critical("Initialization failed since source_status is not NEW or DEPRECATED !")
-        return False
+        raise Exception(f"{rel_src_path} is stopped to be initialized in the DB since it has status {source_status.name}")
     
-    return True
 
 def fetch_existing_compilation_blocks(rel_src_path : str) -> list[CompilationBlock]:
     '''
@@ -278,11 +277,12 @@ def get_source_compile_coverage(compilation_tag : str, lib_name : str, app_dir :
         init_source_in_db(source_status, src_path, rel_src_path, total_blocks, universal_lines, compilation_tag, lib_name)
 
 
+
     compile_command = get_source_compilation_command(app_build_dir, lib_name, src_path)
 
     if compile_command == None:
         logger.critical(f"No .o.cmd file which has compilation command for {src_path} in {lib_name}")
-        db[DATABASE][SOURCES_COLLECTION].find_one_and_delete({"source_path" : os.path.relpath(src_path, os.environ['UK_WORKDIR'])})
+        db[DATABASE][SOURCES_COLLECTION].find_one_and_delete({"source_path" : os.path.relpath(src_path, app_dir)})
         return None
 
     instrument_source(total_blocks, src_path)
@@ -397,12 +397,70 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
 
     global db
 
-    # main  logic to register a new compilation
-    # 1.first we compile to Unikraft app using the coverity tools
-    # 2.submit the build to the Coverity platform
-    # 3.while the platofrm is analyzing it, recompile every source individually in order to include source file data in the database (such as compile blocks)
-    # 4.wait for the Coverity build to be analyzed
-    # 5.fetch Coverity defects and insert them in the database
+    # main logic to register a new compilation
+    # 1. compile to Unikraft app using the coverity tools and kraft
+    # 2. recompile every source individually in order to include source file data in the database (such as compile blocks through instrumentation)
+    # 3. submit the build to the Coverity platform
+    # 4. wait for the Coverity build to be analyzed
+    # 5. fetch Coverity defects and insert them in the database along with data for every source file
+
+    # Up to commit `7560d9468e4dfc22cb7a7b79ba22fc8913bbd4ef` the logic was 
+    # 1. compile to Unikraft app using the coverity tools and kraft
+    # 2. submit the build to the Coverity platform
+    # 3. recompile every source individually in order to include source file data in the database (such as compile blocks)
+    # 4. wait for the Coverity build to be analyzed
+    # 5. fetch Coverity defects and insert them in the database along with data for every source file
+
+    # Old logic is more efficient since submiting a build takes time that can be used for doing recompilation and instrumentation
+    # but since you cannot delete a submited snapshot in Coverity Scan, we whould introduce potential wrong builds that whould fail later
+    # at recompilations and instrumentation
+
+    # New logic will do recompilation and instrumentation first, and if any Exception occurs, delete current app from DB and exit
+    # so that we whould not submit a failing build to Coverity
+    
+    # analyze source files
+
+    try:
+        for (current_lib, _, uk_files) in os.walk(app_build_dir, topdown=True):
+
+            for file in uk_files:
+                
+                # first filter, get *.o.cmd, kconfig directory has same format of files but are weird
+                if file[-6 : ] == ".o.cmd" and current_lib.split("/")[-1] != "kconfig":
+                    
+                    o_cmd_file_abs_path = f"{current_lib}/{file}"
+
+                    with open(o_cmd_file_abs_path, "r") as f:
+                        # ignore the start which is ""
+                        command = f.read()[2 : ]
+                        f.close()
+
+                    src_path = try_compilers_for_src_path(command, o_cmd_file_abs_path)
+
+                    if src_path == None:
+                        logger.debug(f"{o_cmd_file_abs_path} does not have a compilation command")
+                        continue
+                    
+                    logger.debug(f"{o_cmd_file_abs_path} has a correct compilation command file")
+                    logger.debug(f"|||||||||||||||||||||||{src_path}||||||||||||||||||||||||||||||")
+
+                    try:
+                        get_source_compile_coverage(
+                            compilation_tag=compilation_tag,
+                            lib_name=current_lib.split("/")[-1],
+                            app_dir=app_path,
+                            app_build_dir=app_build_dir,
+                            src_path=src_path
+                        )
+                    except Exception as e:
+                        panic_delete_compilation(compilation_tag)
+                        logger.critical(e)
+                        exit(7)
+    except Exception as e:
+        panic_delete_compilation(compilation_tag)
+        logger.critical(e)
+        exit(8)
+
     
     # first end-to-end compilation and build submition to Coverity
     coverity : CoverityAPI = CoverityAPI(configs)
@@ -414,39 +472,6 @@ def analyze_application_sources(compilation_tag : str, app_build_dir : str, app_
     
     # used to scrape crucial metadata for further fetching defects
     coverity.init_snapshot_and_project_views()
-
-    # analyze source files
-    for (current_lib, _, uk_files) in os.walk(app_build_dir, topdown=True):
-
-        for file in uk_files:
-            
-            # first filter, get *.o.cmd, kconfig directory has same format of files but are weird
-            if file[-6 : ] == ".o.cmd" and current_lib.split("/")[-1] != "kconfig":
-                
-                logger.debug("........................................................................")
-                o_cmd_file_abs_path = f"{current_lib}/{file}"
-
-                with open(o_cmd_file_abs_path, "r") as f:
-                    # ignore the start which is ""
-                    command = f.read()[2 : ]
-                    f.close()
-
-                src_path = try_compilers_for_src_path(command, o_cmd_file_abs_path)
-
-                if src_path == None:
-                    logger.debug(f"{o_cmd_file_abs_path} does not have a compilation command")
-                    continue
-                
-                logger.debug(f"{o_cmd_file_abs_path} has a correct compilation command file")
-                logger.debug(f"|||||||||||||||||||||||{src_path}||||||||||||||||||||||||||||||")
-
-                get_source_compile_coverage(
-                    compilation_tag=compilation_tag,
-                    lib_name=current_lib.split("/")[-1],
-                    app_dir=app_path,
-                    app_build_dir=app_build_dir,
-                    src_path=src_path
-                )
 
     # busy wait until the most recent snapshot is the one that has been uploaded now
     current_snapshot_retries = 0
