@@ -30,7 +30,7 @@ A snapshot of how the compilation/scanning status is presented can be seen in th
 
 # Core Concepts 
 
-<img src="docs/unikraft_scanner_tool_general.png" alt="drawing" width="1200" height=600/>
+<img src="docs/unikraft_scanner_tool_general.drawio.svg" alt="drawing" width="1200" height=600/>
 
 # Prerequisites And Configuration 
 
