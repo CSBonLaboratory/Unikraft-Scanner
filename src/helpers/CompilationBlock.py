@@ -63,6 +63,8 @@ class CompilationBlock(MongoEntityInterface, ViewerInterface, StatusInterface):
         ans["_parent_id"] = self.parent_counter
         ans["lines"] = self.lines
         ans["children"] = self.children
+
+        ans['defects'] = [d.to_mongo_dict() for d in self.defects]
     
         return ans
     

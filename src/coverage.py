@@ -5,27 +5,23 @@ import pymongo
 import logging
 import time
 import yaml
+import os
 from colorama import Fore, Back
-from enum import Enum
 
 DATABASE = "unikraft"
 SOURCES_COLLECTION = "sources"
 COMPILATION_COLLECTION = "compilations"
-LOGGER_NAME = "uk_compile_coverage_logger"
+LOGGER_NAME = "unikraft_scanner_logger"
+UNKNOWN_DEFECTS_COLLECTION = "unknown_defects"
 
 import add_app
 import list_app
 import view_app
 import status
+import setup
 
-from helpers.helpers import find_app_format
+from helpers.helpers import find_app_format, find_latest_schema_remote_version, find_latest_schema_local_version
 from helpers.helpers import AppFormat
-
-class RunMode(Enum):
-    LOCAL = "local"
-    PIPELINE = "pipeline"
-
-db = pymongo.MongoClient("mongodb://localhost:27017/")
 
 def main():
 
@@ -34,6 +30,20 @@ def main():
     )
     
     subparser = parser.add_subparsers(dest='operations', help='Available operations')
+
+    setup_parser = subparser.add_parser(
+        description="Initial setup action. Use only when you made a Coverity Scan account and received credentials, from the tool's admin, for interacting with the compilation coverage DB",
+        name='setup',
+        help="Initial setup action. Use only when you made a Coverity Scan account and received credentials, from the tool's admin, for interacting with the compilation coverage DB"
+    )
+
+    setup_parser.add_argument(
+        '-s',
+        "--settings",
+        required=True,
+        action='store',
+        help='Path to the future configuration file that will contain settings chosen during setup phase.'
+    )
 
     app_parser = subparser.add_parser(
         description='App-related operations such as registering an app compilation etc.', 
@@ -165,10 +175,42 @@ def main():
         help='Path to the configuration file.'  
     )
 
+    delete_app_parser.add_argument(
+        '-t',
+        "--tag",
+        required=True,
+        action='store', 
+        help="A new unique tag/description that identifies an app's compilation process."
+    )
+
+    
     args = parser.parse_args()
+
+    if args.operations == "setup":
+        remote_max_version = find_latest_schema_remote_version()
+
+        local_max_version = find_latest_schema_local_version()
+
+        if local_max_version < remote_max_version:
+            print(f"{Fore.RED}Your local configuration schema version {local_max_version} is behind the lastest version {remote_max_version}. Git pull the new features.{Fore.RESET}")
+            exit(11)
+        else:
+            print(f"{Fore.GREEN}Client is up to date.{Fore.RESET}")
+        
+        setup.setup_tool(local_max_version, args.settings)
+
+        exit(0)
 
     with open(args.settings) as config_fd:
         configs = yaml.safe_load(config_fd)
+
+    global db
+
+    db = pymongo.MongoClient(configs['unikraftCoverageDB']['ip'],
+                     username=configs['unikraftCoverageDB']['user'],
+                     password=configs['unikraftCoverageDB']['pass'],
+                     authSource='admin',
+                     authMechanism='SCRAM-SHA-1')
     
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(configs['verbose'] * 10)
@@ -184,26 +226,30 @@ def main():
         out.writelines(f"-----------------------------------------------{time.ctime()}------------------------------------------")
         out.writelines("----------------------------------------------------------------------------------------------------\n")
     
+    logger.info(db.server_info())
 
     if args.operations == "app":
 
         if args.app_operations == "add":
             build_dir = args.app + "/.unikraft/build" if args.build == None else args.build
             app_format = find_app_format(args.app) if args.format == None else args.format
-            add_app.add_app_subcommand(args.app, build_dir, args.tag, app_format, args.compile, configs)
+            add_app.add_app_subcommand(db, args.app, build_dir, args.tag, app_format, args.compile, configs)
 
-        if args.app_operations == "list":
-            list_app.list_app_subcommand(configs['outfile'])
+        elif args.app_operations == "list":
+            list_app.list_app_subcommand(db, configs['outfile'])
 
-        if args.app_operations == "view":
-            view_app.view_app_subcommand(args.tags, configs['outfile'])
+        elif args.app_operations == "view":
+            view_app.view_app_subcommand(db, args.tags, configs['outfile'])
+
+        elif args.app_operations == "delete":
+            add_app.panic_delete_compilation(db, args.tag)
 
     elif args.operations == "status":
-        status.status_subcommand(configs['outfile'], args.path)
+        status.status_subcommand(db, configs['outfile'], args.path)
     else:
         logger.critical("Unknown " + str(args.operations) + " operation")
 
-
+    db.close()
 
 if __name__ == "__main__":
     main()

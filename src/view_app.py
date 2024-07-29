@@ -7,10 +7,9 @@ from coverage import LOGGER_NAME
 logger = logging.getLogger(LOGGER_NAME)
 
 
-def view_app_subcommand(compilation_tags : list[str], out_file_name : str):
+def view_app_subcommand(db : pymongo.MongoClient, compilation_tags : list[str], out_file_name : str):
 
-    from coverage import DATABASE, SOURCES_COLLECTION, db
-
+    from coverage import DATABASE, SOURCES_COLLECTION, COMPILATION_COLLECTION
 
     # very important to have ascending in order to have a tree representation similar to ones presented in an IDE
     app_src_documents_dicts : dict = db[DATABASE][SOURCES_COLLECTION].find(

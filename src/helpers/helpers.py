@@ -12,6 +12,7 @@ from helpers.CompilationBlock import CompilationBlock
 from helpers.MongoEntityInterface import MongoEntityInterface
 from compilers.CompilerInterface import CompilerInterface
 from compilers.GCC import GCC
+import urllib.request
 
 def git_commit_strategy(real_src_path : str) -> str:
     src_tokens = real_src_path.split("/")
@@ -168,7 +169,22 @@ def get_source_version_info(real_src_path : str) -> SourceVersionStrategy:
     return version
 
 
-def trigger_compilation_blocks(activation_cmd : str) -> list[int]:
+def find_latest_schema_remote_version() -> int:
+
+    response = urllib.request.urlopen("https://github.com/CSBonLaboratory/Unikraft-Scanner/tree/master/src/tool_configs")
+
+    html_tool_configs = response.read().decode(response.headers.get_content_charset())
+
+    latest_version = max([int(v) for v in re.findall(r'config_(\d+).yaml', html_tool_configs)])
+
+    return latest_version
+
+def find_latest_schema_local_version() -> int:
+
+    return max([int(re.findall(r"config_(\d+).yaml", f)[0]) for f in os.listdir("tool_configs/") if os.path.isfile(os.path.join("tool_configs/", f))])
+
+
+def trigger_compilation_blocks(activation_cmd : str, preproc_log_file : str) -> list[int]:
 
     '''
     Opens a shell process that executes the compilation command of a source file.
@@ -178,6 +194,7 @@ def trigger_compilation_blocks(activation_cmd : str) -> list[int]:
     
     Returns:
         A list of indexes of compilation blocks which were activated after rerunning the command.
+
     '''
     from coverage import LOGGER_NAME
     logger = logging.getLogger(LOGGER_NAME)
@@ -188,8 +205,8 @@ def trigger_compilation_blocks(activation_cmd : str) -> list[int]:
     
     warnings = warnings_raw.decode()
 
-    # TODO: Debug only. Remove in near future
-    f = open("dorel","a")
+    # Write C preprocessor warning. It can be warnings 
+    f = open(preproc_log_file,"a")
     f.write(warnings)
     f.close()
 

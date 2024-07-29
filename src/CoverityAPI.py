@@ -21,7 +21,7 @@ from coverage import LOGGER_NAME
 import re
 import shutil
 import time
-
+from logging import FileHandler
 
 
 logger = logging.getLogger(LOGGER_NAME)
@@ -99,9 +99,6 @@ def defects_response_interceptor(request : Request, response : Response):
 
             coverityAPI.cached_last_defect_results = json.loads(decode(response.body, response.headers.get('Content-Encoding', 'identity')))['resultSet']['results']
 
-            for raw_defect in coverityAPI.cached_last_defect_results:
-                logger.debug(raw_defect)
-
             coverityAPI.defects_state = DefectsStates.FOUND
 
             coverityAPI.interceptor_condition.notify()
@@ -112,7 +109,6 @@ class CoverityAPI(object):
 
     user_email : str
     user_pass : str
-    upload_token : str
     browser : Firefox
     scraper_wait : int
     project_overview_url : str
@@ -141,8 +137,8 @@ class CoverityAPI(object):
             cls.instance : CoverityAPI = super(CoverityAPI, cls).__new__(cls)
 
             cls.instance.log_file = configs['logfile']
-            cls.instance.upload_token = os.environ[configs['coverityAPI']['uploadTokenEnv']]
-            cls.instance.user_email = os.environ[configs["coverityAPI"]['userEmailEnv']]
+            cls.instance.upload_token = configs['coverityAPI']['uploadToken']
+            cls.instance.user_email = configs["coverityAPI"]['userEmail']
             cls.instance.project_name = configs['coverityAPI']['projectName']
 
             cls.instance.unknown_snapshot = True
@@ -454,55 +450,86 @@ class CoverityAPI(object):
             self.defects_state = DefectsStates.NOT_STARTED
             
         return
+    
+    def intercept_build(self, compile_cmd : str, coverity_suite_path : str, app_path : str) -> bool:
 
-    def submit_build(self, app_path : str, compile_cmd : str, compilation_tag : str) -> bool:
-        
+        logger.debug(f"Started intercepting the build with {coverity_suite_path}/cov-build for command {compile_cmd} in app {app_path}")
+
+        logs_file_handler : FileHandler = logger.handlers[0]
+
+        os.chdir(app_path)
+
         if os.path.exists(f"{app_path}/.unikraft"):
-            logger.warning("Detected already built app. Removing the .unikraft directory")
+
+            logger.warning("Detected already built app. Removing the .unikraft directory using kraft clean --proper")
+
+            clean_proc = subprocess.Popen(f"kraft clean --proper --log-level debug {app_path}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            out, err = clean_proc.communicate()
+
+            logger.debug(f"Output app kraft cleaning: \n{out.decode()}")
+
+            logger.error(f"Error app kraft cleaning: \n{err.decode()}")
+
+            clean_proc.terminate()
+
             shutil.rmtree(f"{app_path}/.unikraft")
 
-        upload_script_path = os.getcwd() + "/.."
+        cov_build_subprocess = subprocess.Popen(f"{coverity_suite_path}/cov-build --dir cov-int {compile_cmd}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        job = f"{upload_script_path}/upload.sh {app_path} \"{compile_cmd}\" {self.upload_token} {self.user_email} \"{compilation_tag}\" \"{self.project_name}\" >> {self.log_file}"
+        out, err = cov_build_subprocess.communicate()
 
-        logger.debug(f"Executing upload job: {upload_script_path}/upload.sh")
+        cov_build_subprocess.terminate()
 
-        submit_proc = subprocess.Popen(job, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        compilation_success_msg = b"C/C++ compilation units (100%) are ready for analysis"
 
-        _, err_raw = submit_proc.communicate()
+        logger.debug(f"Output build interception: \n{out.decode()}")
 
-        err = err_raw.decode()
+        if compilation_success_msg not in out:
+            logger.critical(f"The app has compilation issues. The compilation ration should be 100% in order to you the compilation coverage tool")
+            return False
         
-        submit_proc.terminate()
+        logger.warning(f"Error build interception: \n{err.decode()}")
 
-        logger.warning(err)
-
-        if "No files were emitted." in err:
+        if b"No files were emitted." in err:
             logger.critical("The app was previously compiled. Remove the .unikraft directory and try again")
             return False
         
-        compilation_success_msg = "C/C++ compilation units (100%) are ready for analysis"
+        return True
 
-        # search through the log file for compilation status, accept only 100% compilation ratio
-        compile_status_proc = subprocess.Popen(f'grep \"{compilation_success_msg}\" {self.log_file}', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = compile_status_proc.communicate()
-        if out == b'':
-            logger.critical(f"The app has compilation issues. The compilation ration should be 100% in order to you the compilation coverage tool")
-            return False
-        if err != b'':
-            logger.warning(f"Error warning while grep-ing for 100% compile ration:\n{err.decode()}")
+
+    def submit_build(self, app_path : str, compile_cmd : str, compilation_tag : str) -> bool:
+
+        os.chdir(app_path)
+        
+        archive_proc = subprocess.Popen(f"tar czvf {app_path}/analysis_input.tgz cov-int", shell=True)
+
+        archive_proc.communicate()
+
+        archive_proc.terminate()
+
+        upload_proc = subprocess.Popen(f'curl --form token="{self.upload_token}" --form email={self.user_email} --form "file=@./analysis_input.tgz" --form version=1 --form description="{compilation_tag}" https://scan.coverity.com/builds?project={self.project_name}', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        out, err = upload_proc.communicate()
+        
+        upload_proc.terminate()
+
+        logger.warning(err)
+
+        logger.debug(out)
         
         # Coverity limits the number of builds you upload
-        quota_msg = "The build submission quota for this project has been reached."
-        quota_reached_proc = subprocess.Popen(f'grep \"{quota_msg}\" {self.log_file}', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out,err = quota_reached_proc.communicate()
-        if out != b'':
+        quota_msg = b"The build submission quota for this project has been reached."
+        
+        if quota_msg in out:
             logger.critical("Quota for Coverity submited builds reached. Try again next time")
-            logger.critical(out)
             return False
-        if err != b'':
-            logger.warning(f"Error warning while grep-ing for reached quota:\n{err.decode()}")
-            
+        
+        os.remove("analysis_input.tgz")
 
+        shutil.rmtree("cov-int")
+
+        logger.debug("Removing archiving for Coverity and intercept results directory")
+    
         return True
                     

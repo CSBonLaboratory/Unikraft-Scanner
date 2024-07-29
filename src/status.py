@@ -6,12 +6,13 @@ from symbol_engine import find_compilation_blocks_and_lines
 from SourceTrie import SourceTrie
 from functools import reduce
 from coverage import LOGGER_NAME
+import pymongo
 
 logger = logging.getLogger(LOGGER_NAME)
 
-def status_subcommand(saved_outfile : str, target_dir : str):
+def status_subcommand(db : pymongo.MongoClient, saved_outfile : str, target_dir : str):
 
-    from coverage import DATABASE, SOURCES_COLLECTION, db
+    from coverage import DATABASE, SOURCES_COLLECTION
     
     unikraft_root = os.environ['UK_WORKDIR']
 

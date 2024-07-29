@@ -176,6 +176,7 @@ class CSourceDocument(CSourceNoDocument, MongoEntityInterface, ViewerInterface, 
         ans = {}
 
         ans["source_path"] = self.source_path
+        
         ans["triggered_compilations"] = self.triggered_compilations
         
         ans.update(self.source_version.to_mongo_dict())

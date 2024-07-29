@@ -1,10 +1,11 @@
 import logging
 from colorama import Fore
 from coverage import LOGGER_NAME
+import pymongo
 
 logger = logging.getLogger(LOGGER_NAME)
 
-def get_app_coverage(compilation_tag : str) -> tuple[int, ...]:
+def get_app_coverage(db : pymongo.MongoClient, compilation_tag : str) -> tuple[int, ...]:
 
     from coverage import DATABASE, db, SOURCES_COLLECTION
 
@@ -26,11 +27,11 @@ def get_app_coverage(compilation_tag : str) -> tuple[int, ...]:
     return compiled_lines, total_lines
 
 
-def print_app_coverage(compilation_tag, saved_outfile):
+def print_app_coverage(db : pymongo.MongoClient, compilation_tag, saved_outfile):
 
     logger.debug(f"Found app with tag {compilation_tag}")
 
-    compiled_lines, total_lines = get_app_coverage(compilation_tag)
+    compiled_lines, total_lines = get_app_coverage(db, compilation_tag)
 
     logger.info(f"Total lines {total_lines} with compiled lines {compiled_lines}")
 
@@ -50,12 +51,12 @@ def print_app_coverage(compilation_tag, saved_outfile):
 
     return
 
-def list_app_subcommand(saved_outfile : str):
+def list_app_subcommand(db : pymongo.MongoClient, saved_outfile : str):
 
-    from coverage import DATABASE, db, COMPILATION_COLLECTION
+    from coverage import DATABASE, COMPILATION_COLLECTION
 
     for compilation_document in db[DATABASE][COMPILATION_COLLECTION].find({}):
-        print_app_coverage(compilation_document["tag"], saved_outfile)
+        print_app_coverage(db, compilation_document["tag"], saved_outfile)
     
     return
     

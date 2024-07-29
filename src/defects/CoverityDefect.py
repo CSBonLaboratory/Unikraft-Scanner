@@ -35,6 +35,7 @@ class CoverityDefect(AbstractLineDefect):
         del cov_dict['displayImpact']
         del cov_dict['displayCategory']
         del cov_dict['checker']
+        del cov_dict['compilation_tag']
 
         self.others = cov_dict
 
@@ -48,6 +49,7 @@ class CoverityDefect(AbstractLineDefect):
         mongo_dict['displayImpact'] = self.impact
         mongo_dict['displayCategory'] = self.category
         mongo_dict['checker'] = self.coverity_checker
+        mongo_dict['compilation_tag'] = self.compilation_tag
 
         mongo_dict.update(self.others)
 
