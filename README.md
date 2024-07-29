@@ -2,7 +2,7 @@
 
 Unikraft Scanner is a tool intended for developers, that solves issues regarding the scanning coverage when using third-party static code analysis security tools on the Unikraft repo.  
 
-Static code analysis tools, such as Coverity or CodeQL, intercept the compilation stage of the target project, extract various information about the compiled code, build a database out of different compiler generated low-level representations and find possible vulnerabilities by querying the database for known weakness patterns. **Thus, only compiled code will be analyzed. ** 
+Static code analysis tools, such as Coverity or CodeQL, intercept the compilation stage of the target project, extract various information about the compiled code, build a database out of different compiler generated low-level representations and find possible vulnerabilities by querying the database for known weakness patterns. **Thus, only compiled code will be analyzed.** 
 
 However, Unikraft is made of multiple loosely-coupled C modules that can be chosen to be compiled, or not, depending on the top-level application's requirements, ported to run over the Unikraft unikernel. This means that the Unikraft code repo is not a single compilation target but multiple "mutations" that can have missing modules that are not critically required by the application. Such modules are represented by 1 or more C source files compiled into a single object file. 
 
@@ -18,7 +18,7 @@ Right now, the Unikraft Scanner system is divided in 3 environments:
 
 - the local environments (in green): 
     1. Developers utilize the Unikraft Scanner CLI client to find the compilation coverage of a Unikraft app in regards to the whole Unikraft core, built using a local Unikraft repo or using the [Unikraft Applications & Examples Catalog](https://github.com/unikraft/catalog)
-    2. CLI client starts the ** Coverity local build suite **. These programs are given for free by Synopsys and intercept the compilation phase, build a database archive with low-level compiler representations of the code and send it to the Coverity Scan cloud for analysis.
+    2. CLI client starts the **Coverity local build suite**. These programs are given for free by Synopsys and intercept the compilation phase, build a database archive with low-level compiler representations of the code and send it to the Coverity Scan cloud for analysis.
     3. While the static analysis is running, the Unikraft Scanner CLI client instruments all `#if`, `#elif`, `#else`, `#ifndef`, `#ifdef` blocks within all C source files compiled at step 2, with a `#warning` directive to see which block is triggered at a second compilation.
     4. Unikraft Scanner CLI client starts a second compilation and finds all triggered blocks (by checking in stderr of the compilation/make stage for `warning` messages) and sends the compilation coverage and matadata to a centralised database.
     5. Once the static analysis is finished, the Unikraft Scanner scrapes the defects from the Coverity Scan cloud and sends them also to the database.
@@ -47,7 +47,7 @@ In order to run this tool you will need:
 
 2. Install Python libraries mentioned in `src/requirements.txt`. It is advised to configure a Python virtual environment (venv) that includes these dependencies.
 
-3. Make an account for `https://scan.coverity.com`. ** Right now, Github authentication for Coverity is NOT supported when using Unikraft Scanner ! **
+3. Make an account for `https://scan.coverity.com`. **Right now, Github authentication for Coverity is NOT supported when using Unikraft Scanner !**
 
 4. Request `Maintainer` role for the Coverity project `https://scan.coverity.com/projects/unikraft-scanning?tab=overview`. This way, you will be able to submit compilations for analysis and view the found defects.
 
