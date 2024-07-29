@@ -68,10 +68,14 @@ View logging information in the file specified by `logfile` option from the conf
 View tool output in the file specified by `outfile` option from the config file. Output may be too large for console output. 
 
 Add/register a new app in order to increase compilation/scan coverage: 
+````
+python3 coverage.py app add -s <path to yaml config file from step 8>
 
-`python3 coverage.py app add -s <path to yaml config file from step 8>`
-                             `-a <path to a Unikraft app (you can use the ones compatible with catalog)>`
-                             `-t <tag/description (for multi-word put it between double quotes) UNIQUE to both the local DB and Coverity platform>`
-                             `-c <kraft build compilation command>`
+                             -a <path to a Unikraft app (you can use the ones compatible with catalog)>
+
+                             -t <tag/description (for multi-word put it between double quotes) UNIQUE to both the local DB and Coverity platform>
+
+                             -c <kraft build compilation command>
+````
 
 You can check the log file to see tool progress in real time. After tool execution, go to the Coverity Scan project `https://scan.coverity.com/projects/unikraft-scanning?tab=overview`, click the `View Defects` button and inspect found defects.
