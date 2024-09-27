@@ -1,6 +1,5 @@
 import logging
 import pymongo
-import os
 from SourceTrie import SourceTrie
 from helpers.CSourceDocument import CSourceDocument
 from coverage import LOGGER_NAME
@@ -19,7 +18,7 @@ def view_app_subcommand(db : pymongo.MongoClient, compilation_tags : list[str], 
 
     app_src_documents = [CSourceDocument(src_doc_dict) for src_doc_dict in app_src_documents_dicts]
 
-    appTrie = SourceTrie(os.environ["UK_WORKDIR"])
+    appTrie = SourceTrie(".")
 
     # remove other compiled stats of compilations that are not wished to be visualized 
     for src_doc in app_src_documents:
@@ -27,6 +26,7 @@ def view_app_subcommand(db : pymongo.MongoClient, compilation_tags : list[str], 
         for tag in src_doc.compiled_stats:
             if tag not in compilation_tags:
                 del src_doc.compiled_stats[tag]
+                
         appTrie.add_node(src_doc.source_path.split("/"), src_doc)
 
     

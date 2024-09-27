@@ -1,39 +1,41 @@
 import logging
 import pymongo
 import os
+import csv
 import shutil
 from typing import Union
 from symbol_engine import find_compilation_blocks_and_lines, find_children
 from helpers.helpers import (
-    get_source_version_info,
+    get_source_git_commit_hashes,
     trigger_compilation_blocks,
     try_compilers_for_src_path,
     get_source_compilation_command,
-    instrument_source
+    instrument_source,
+    prepare_coverity_defects_for_db
 )
 
 from helpers.InterceptorTimeout import InterceptorTimeout
 from helpers.CompilationBlock import CompilationBlock
 from helpers.CSourceDocument import CSourceDocument
-from helpers.helpers import SourceStatus, SourceVersionStrategy, GitCommitStrategy, SHA1Strategy, AppFormat
+from helpers.helpers import SourceVersionInfo
 from CoverityAPI import CoverityAPI
 
 from bson.objectid import ObjectId
-from pymongo import ReturnDocument
 from pymongo.results import DeleteResult
+from pymongo.cursor import Cursor
 from defects.AbstractLineDefect import AbstractLineDefect
 from defects.CoverityDefect import CoverityDefect
 from selenium.common.exceptions import TimeoutException
 
 import coverage
+logger = logging.getLogger(coverage.LOGGER_NAME)
 DATABASE = coverage.DATABASE
 SOURCES_COLLECTION = coverage.SOURCES_COLLECTION
 COMPILATION_COLLECTION = coverage.COMPILATION_COLLECTION
 UNKNOWN_DEFECTS_COLLECTION = coverage.UNKNOWN_DEFECTS_COLLECTION
 
-# db = coverage.db
-
-logger = logging.getLogger(coverage.LOGGER_NAME)
+lines_of_code = 0
+blocks_of_code = 0
 
 def panic_delete_compilation(db : pymongo.MongoClient, compilation_tag : str):
     
@@ -61,7 +63,7 @@ def panic_delete_compilation(db : pymongo.MongoClient, compilation_tag : str):
     return
 
 
-def is_new_source(db : pymongo.MongoClient, src_path : str, app_path : str) -> SourceStatus:
+def is_new_source(db : pymongo.MongoClient, src_path : str, app_path : str, compilation_tag : str) -> SourceVersionInfo:
 
     '''
     Checks to see the status of the source file.
@@ -76,53 +78,44 @@ def is_new_source(db : pymongo.MongoClient, src_path : str, app_path : str) -> S
         A SourceStatus instance which means that the source file is new, existing but modified or existing and unmodified.
     '''
 
-    latest_version : SourceVersionStrategy = get_source_version_info(src_path)
+    latest_commits : list[str] | None = get_source_git_commit_hashes(src_path)
+    
+    if latest_commits == None:
+        logger.critical(f"Failed to use git in finding source file commit hash and repo commit hash. Problem is not that the file is not part of any git repo, but git command crashed")
+        panic_delete_compilation(db, compilation_tag)
+        exit(12)
 
-    existing_source : Union[CSourceDocument, dict] = db[DATABASE][SOURCES_COLLECTION].find_one(
-        {"source_path" : os.path.relpath(src_path, app_path)}
+    source_version = SourceVersionInfo()
+    source_version.git_file_commit_hash = latest_commits[0]
+    source_version.git_repo_commit_hash = latest_commits[1]
+    source_snapshot : Cursor = db[DATABASE][SOURCES_COLLECTION].find_one(
+        {
+            "$and": [
+                {"source_path" : os.path.relpath(src_path, app_path)},
+                {"git_file_commit_hash" : latest_commits[0]}
+            ]
+        }
     )
 
+    if source_snapshot == None:
+        logger.debug(f"New source {os.path.relpath(src_path, app_path)} with commit hash {latest_commits[0]} in repo with hash {latest_commits[1]}")
+        source_version.status = SourceVersionInfo.SourceStatus.NEW
+        return source_version
     
-    logger.debug(f"{src_path} has hash {latest_version.to_mongo_dict()}")
-        
-    if existing_source == None:
-        logger.debug(f"{src_path} has not been found in the database. STATUS: NEW")
-        return SourceStatus.NEW
+    logger.debug(f"Source {os.path.relpath(src_path, app_path)} with commit hash {latest_commits[0]} in repo with hash {latest_commits[1]} already existing.")
+    source_version.status = SourceVersionInfo.SourceStatus.EXISTING
+    return source_version
     
-    found_doc : CSourceDocument = CSourceDocument(existing_source)
-
-    if latest_version.version_key == GitCommitStrategy.version_key and found_doc.source_version.version_key == GitCommitStrategy.version_key:
-        if found_doc.source_version.version_value == latest_version.version_value:
-            logger.debug(f"{src_path} source is already registered. STATUS: EXISTING checked using git commit id {latest_version.version_value}")
-            return SourceStatus.EXISTING
-        else:
-            # since it is a previous/deprecated version of that source we need to delete its compile blocks from the db, update the commit_id and restart the analysis process
-            logger.debug(f"{src_path} has commit {latest_version.version_value} but database has outdated commit {found_doc.source_version.version_value}.STATUS: DEPRECATED")
-            return SourceStatus.DEPRECATED
-    
-    if latest_version.version_key == SHA1Strategy.version_key and found_doc.source_version.version_key == SHA1Strategy.version_key:
-        if found_doc.source_version.version_value == latest_version.version_value:
-            logger.debug(f"{src_path} source is already registered. STATUS: EXISTING checked using sha1 id {latest_version.version_value}")
-            return SourceStatus.EXISTING
-        else:
-            # since it is a previous/deprecated version of that source we need to delete its compile blocks from the db, update the commit_id and restart the analysis process
-            logger.debug(f"{src_path} has hash {latest_version.version_value} but database has outdated hash {found_doc.source_version.version_value}.STATUS: DEPRECATED")
-            return SourceStatus.DEPRECATED
-        
-
-    logger.critical(f"Cannot check source status. DB entry and current source have different version id types")
-    logger.critical(f"{existing_source} VS {latest_version}")
-
-    return SourceStatus.UNKNOWN
     
         
 
-def update_db_activated_compile_blocks(db : pymongo.MongoClient, activated_block_counters : list[int], rel_src_path : str, compilation_tag: str) -> Union[CSourceDocument, dict]:
+def update_db_activated_compile_blocks(db : pymongo.MongoClient, activated_block_counters : list[int], rel_src_path : str, compilation_tag: str, source_version : SourceVersionInfo) -> Union[CSourceDocument, dict]:
     '''
-    Updates the document of the source file from the db with the activated compilation blocks in the context of the registered compilation.
+    Updates the document of the source file from the db with the activated compilation blocks (triggered by the current compilation).
 
     Args:
         activated_block_counter(list[int]): List of indexes of triggered/activated compilation block (info given by a prior call to trigger_compialtion_blocks() )
+
         rel_src_path: Relative path of the source file in the context of the app directory
 
     Returns:
@@ -130,7 +123,13 @@ def update_db_activated_compile_blocks(db : pymongo.MongoClient, activated_block
     '''
     
     source_document : Union[CSourceDocument, dict] = db[DATABASE][SOURCES_COLLECTION].find_one(
-        {"source_path": rel_src_path}
+        {
+            "$and" : [
+                {"source_path": rel_src_path},
+                {"git_file_commit_hash" : source_version.git_file_commit_hash}
+            ]
+        }
+        
     )
 
     logger.debug(f"BEFORE update of activated compile blocks\n{source_document}")
@@ -160,7 +159,7 @@ def update_db_activated_compile_blocks(db : pymongo.MongoClient, activated_block
 
     return updated_source_document
 
-def init_source_in_db(db : pymongo.MongoClient, source_status : SourceStatus, src_path : str, rel_src_path : str, total_blocks : list[CompilationBlock], universal_lines : int, compilation_tag : str, lib_name : str):
+def init_source_in_db(db : pymongo.MongoClient, source_version : SourceVersionInfo, src_path : str, rel_src_path : str, total_blocks : list[CompilationBlock], universal_lines : int, compilation_tag : str, lib_name : str):
     '''
     Creates a new document in db for a new source file, or updates an existing source file that has been modified.
 
@@ -194,42 +193,21 @@ def init_source_in_db(db : pymongo.MongoClient, source_status : SourceStatus, sr
                 "compiled_stats" : {},
                 "total_lines" : total_lines,
                 "lib" : lib_name,
-                "defects" : []
+                "defects" : [],
+                "git_file_commit_hash" : source_version.git_file_commit_hash,
+                "git_repo_commit_hash" : source_version.git_repo_commit_hash
     }
 
-
-    version_info : Union[SourceVersionStrategy, dict] = get_source_version_info(src_path)
-
-    new_src_document.update(version_info.to_mongo_dict())
-
     # the source is new so we create a new entry in the database
-    if source_status == SourceStatus.NEW:
-
-        db[DATABASE][SOURCES_COLLECTION].insert_one(new_src_document)
+    db[DATABASE][SOURCES_COLLECTION].insert_one(new_src_document)
         
-        logger.debug(f"Initialized source in db\n{new_src_document}")
+    logger.debug(f"Initialized source in db\n{new_src_document}")
 
-    # the source is deprecated we need to clear the compilation blocks of the existing entry and update latest git commit id
-    elif source_status == SourceStatus.DEPRECATED:
-        
-        logger.debug(
-            f"BEFORE source update due to deprecated commit\n" + 
-            f"{db[DATABASE][SOURCES_COLLECTION].find_one({'source_path' : rel_src_path})}"
-        )
+    return
 
-        updated_source_document : Union[CSourceDocument, dict] = db[DATABASE][SOURCES_COLLECTION].find_one_and_update(
-            filter= {"source_path" : rel_src_path},
-            update= {"$set" : new_src_document},
-            return_document= ReturnDocument.AFTER
-        )
-
-        logger.debug(f"AFTER source update due to deprecated commit {updated_source_document}")
-    else:
-        logger.critical("Initialization failed since source_status is not NEW or DEPRECATED !")
-        raise Exception(f"{rel_src_path} is stopped to be initialized in the DB since it has status {source_status.name}")
     
 
-def fetch_existing_compilation_blocks(db : pymongo.MongoClient, rel_src_path : str) -> list[CompilationBlock]:
+def fetch_existing_compilation_blocks(db : pymongo.MongoClient, rel_src_path : str, source_version : SourceVersionInfo) -> list[CompilationBlock]:
     '''
     Fetch compilation blocks from the db.
 
@@ -245,7 +223,7 @@ def fetch_existing_compilation_blocks(db : pymongo.MongoClient, rel_src_path : s
     '''
 
     existing_blocks : Union[list[CompilationBlock], dict] = db[DATABASE][SOURCES_COLLECTION].find_one(
-            filter= {"source_path" : rel_src_path},
+            filter= {"$and" : [{"source_path" : rel_src_path}, {"git_file_commit_hash" : source_version.git_file_commit_hash}]},
             projection= {"compile_blocks" : 1, "_id" : 0}
         )
 
@@ -257,6 +235,7 @@ def fetch_existing_compilation_blocks(db : pymongo.MongoClient, rel_src_path : s
 
 
 def get_source_compile_coverage(db : pymongo.MongoClient, compilation_tag : str, lib_name : str, app_dir : str, app_build_dir : str, src_path : str, configs : dict) -> Union[CSourceDocument, dict]:
+    global lines_of_code, blocks_of_code
 
     # we need relative path since this tool might be run in various environments, or on various apps on the same environment
     rel_src_path = os.path.relpath(src_path, app_dir)
@@ -266,44 +245,47 @@ def get_source_compile_coverage(db : pymongo.MongoClient, compilation_tag : str,
     os.makedirs(os.path.dirname(copy_source_path), exist_ok=True)
     shutil.copy(src_path, copy_source_path)
 
-    source_status : SourceStatus = is_new_source(db, src_path, app_dir)
+    source_version : SourceVersionInfo = is_new_source(db, src_path, app_dir, compilation_tag)
 
-    # the source is already registered, so we can fetch all compilation blocks from the database
-    # also bind the compilation id to this file since the universal lines of code are compiled
-    if source_status == SourceStatus.EXISTING:
-        total_blocks : list[CompilationBlock] = fetch_existing_compilation_blocks(db, os.path.relpath(src_path, app_dir))
+    # the source version is already registered, so we can fetch all compilation blocks from the database
+    # also bind the compilation id to this file since the universal lines of code (ouside any conditional compile block like #ifdef) are compiled anyways
+    if source_version.status == SourceVersionInfo.SourceStatus.EXISTING:
+        total_blocks : list[CompilationBlock] = fetch_existing_compilation_blocks(db, os.path.relpath(src_path, app_dir), source_version)
 
         db[DATABASE][SOURCES_COLLECTION].find_one_and_update(
-            filter={"source_path" :  rel_src_path},
+            filter={"$and" : [{"source_path" : rel_src_path}, {"git_file_commit_hash" : source_version.git_file_commit_hash}]},
             update={"$push": {"triggered_compilations" : compilation_tag}}
         )
 
     # the source is not registered so we must parse the source file and find compilation blocks
     # or the source needs to be cleared due to deprecation so we must parse the updated source file and find compilation blocks
-    elif source_status == SourceStatus.NEW or source_status == SourceStatus.DEPRECATED:
+    elif source_version.status == SourceVersionInfo.SourceStatus.NEW:
 
-        total_blocks, universal_lines = find_compilation_blocks_and_lines(src_path, True)
-        init_source_in_db(db, source_status, src_path, rel_src_path, total_blocks, universal_lines, compilation_tag, lib_name)
-
-
+        total_blocks, universal_lines, lines = find_compilation_blocks_and_lines(src_path, True)
+        lines_of_code += lines
+        blocks_of_code += len(total_blocks)
+        init_source_in_db(db, source_version, src_path, rel_src_path, total_blocks, universal_lines, compilation_tag, lib_name)
 
     compile_command = get_source_compilation_command(app_build_dir, lib_name, src_path)
 
     if compile_command == None:
         logger.critical(f"No .o.cmd file which has compilation command for {src_path} in {lib_name}")
-        db[DATABASE][SOURCES_COLLECTION].find_one_and_delete({"source_path" : os.path.relpath(src_path, app_dir)})
+        db[DATABASE][SOURCES_COLLECTION].find_one_and_delete({"$and" : [{"source_path" : rel_src_path}, {"git_file_commit_hash" : source_version.git_file_commit_hash}]})
         return None
 
     instrument_source(total_blocks, src_path)
 
+    preproc_file_path = os.path.join(f"{app_dir}/.scanner/copies/", configs['preprocFile'])
+
     try:
-        activated_block_counters = trigger_compilation_blocks(compile_command, configs['preprocFile'])
+        activated_block_counters = trigger_compilation_blocks(compile_command, preproc_file_path, src_path)
 
         updated_src_document = update_db_activated_compile_blocks(
                 db=db,
                 activated_block_counters= activated_block_counters,
                 rel_src_path= rel_src_path,
-                compilation_tag= compilation_tag
+                compilation_tag= compilation_tag,
+                source_version=source_version
         )
     except Exception as e:
         raise e
@@ -315,27 +297,48 @@ def get_source_compile_coverage(db : pymongo.MongoClient, compilation_tag : str,
     return updated_src_document
 
 def insert_defects_in_db(db : pymongo.MongoClient, cov_defects : list[AbstractLineDefect], compilation_tag : str) -> None:
+        
+        # sort defects in ascending order so that when viewing them we will also see them in ascending order
+        # pushing them in db is like pushing them in a queue
+        cov_defects.sort(key= lambda x : x.line_number)
 
         for defect in cov_defects:
-
-            source_document_dict  : dict = db[DATABASE][SOURCES_COLLECTION].find_one(
+            logger.debug(f"Looking for source {defect.source_path} compiled during {compilation_tag} that has defect line number {defect.line_number}")
+            
+            print("\n")
+            print(defect.to_mongo_dict())
+            print("||||||||||||||||||||||||||||||||||||")
+            source_document_dict : dict = db[DATABASE][SOURCES_COLLECTION].find_one(
                 filter={
-                    "source_path" : defect.source_path
+                    "$and" : [
+                        {"source_path" : defect.source_path}, 
+                        {"triggered_compilations" : {"$in" : [compilation_tag]}}
+                    ]
                 }
             )
             
-            # defect does not appear in a C source file but in a header file
+            # defect does not appear in a C source file but in a header file which is not considered suring the `app add` operation
             # insert defect in a collection for such defects
-            # it's a temporal fix for https://github.com/CSBonLaboratory/Unikraft-Scanner/issues/5
+            # it's a band-aid fix for https://github.com/CSBonLaboratory/Unikraft-Scanner/issues/5
             if source_document_dict == None:
-                logger.critical(f"No such source {defect.source_path} featured in defect {defect.to_mongo_dict()}. Ignore this defect do not add it in source database but in unknown defects database")
-                db[DATABASE][UNKNOWN_DEFECTS_COLLECTION].insert_one(defect.to_mongo_dict())
-                return
+                logger.critical(f"No such source {defect.source_path} featured in defect {defect.to_mongo_dict()}. Do not try to add it in source database but see if it does not already exist in unknown defects collection")
+
+                unknown_defect_res = db[DATABASE][UNKNOWN_DEFECTS_COLLECTION].find_one(
+                    filter={"cid" : defect.id}
+                )
+
+                if unknown_defect_res == None:
+                    logger.debug(f"Defect with id {defect.id} not found in unknown defects database. Add it now.")
+                    db[DATABASE][UNKNOWN_DEFECTS_COLLECTION].insert_one(defect.to_mongo_dict())
+                    return
+                else:
+                    logger.debug(f"Defect with id {defect.id} and compialtion tag {defect.compilation_tag} is the same as the one with compilation tag: {unknown_defect_res['compilation_tag']}. Do not add it even in the unknown defects collection")
+                    return
             
             logger.debug(f"-------------------- Start inserting defect in {source_document_dict['source_path']} ---------------------")
 
             logger.debug(f"DEFECT {defect.to_mongo_dict()}")
-
+            
             source_document = CSourceDocument(source_document_dict)
 
             # artificial CompilationBlock root (which includes the entire source file) that contains all real CompilationBlock roots
@@ -355,7 +358,10 @@ def insert_defects_in_db(db : pymongo.MongoClient, cov_defects : list[AbstractLi
             current_block = root_block
             tree_end = False
 
-            while tree_end:
+            if defect.line_number == -1:
+                tree_end = True
+
+            while tree_end != True:
                 
                 # if partial solution does not have any children, then it is a final solution
                 if current_block.children == []:
@@ -381,9 +387,10 @@ def insert_defects_in_db(db : pymongo.MongoClient, cov_defects : list[AbstractLi
             if current_block == root_block:
                 logger.debug(f"Defect {defect.to_mongo_dict()} inserted in universal part of the document")
                 db[DATABASE][SOURCES_COLLECTION].update_one(
-                    filter={
-                       "source_path" : defect.source_path
-                    },
+                    filter={"$and" : [
+                        {"source_path" : defect.source_path}, 
+                        {"triggered_compilations" : {"$in" : [compilation_tag]}}
+                    ]},
                     update={
                         "$push" : {"defects" : defect.to_mongo_dict()}
                     }
@@ -393,9 +400,10 @@ def insert_defects_in_db(db : pymongo.MongoClient, cov_defects : list[AbstractLi
                 logger.debug(f"Defect {defect} inserted in compile block {current_block.to_mongo_dict()}")
                 # insert the defect in the suitable compile block
                 cb : dict = db[DATABASE][SOURCES_COLLECTION].find_one(
-                    filter={
-                        "source_path" : defect.source_path
-                    },
+                    filter={"$and" : [
+                        {"source_path" : defect.source_path}, 
+                        {"triggered_compilations" : {"$in" : [compilation_tag]}}
+                    ]},
                     projection={
                             "_id" : False,
                             "compile_blocks" : True
@@ -412,49 +420,28 @@ def insert_defects_in_db(db : pymongo.MongoClient, cov_defects : list[AbstractLi
                         "$set" : {"compile_blocks" : cb}
                     }
                 )
-
-def analyze_application_sources(db : pymongo.MongoClient, compilation_tag : str, app_build_dir : str, app_path : str, compile_cmd : str, configs : dict):
-
-    # main logic to register a new compilation
-    # 1. compile to Unikraft app using the coverity tools and kraft
-    # 2. recompile every source individually in order to include source file data in the database (such as compile blocks through instrumentation)
-    # 3. submit the build to the Coverity platform
-    # 4. wait for the Coverity build to be analyzed
-    # 5. fetch Coverity defects and insert them in the database along with data for every source file
-
-    # Up to commit `7560d9468e4dfc22cb7a7b79ba22fc8913bbd4ef` the logic was:
-    # 1. compile to Unikraft app using the coverity tools and kraft
-    # 2. recompile every source individually in order to include source file data in the database (such as compile blocks)
-    # 3. submit the build to the Coverity platform
-    # 4. wait for the Coverity build to be analyzed
-    # 5. fetch Coverity defects and insert them in the database along with data for every source file
-
-    # Old logic is more efficient since submiting a build takes time that can be used for doing recompilation and instrumentation
-    # but since you cannot delete a submited snapshot in Coverity Scan, we whould introduce potential wrong builds that whould fail later
-    # at recompilations and instrumentation
-
-    # New logic will do recompilation and instrumentation first, and if any Exception occurs, delete current app from DB and exit
-    # so that we whould not submit a failing build to Coverity
-    
-    # init interface between Coverity and Unikraft scanner tool
-    coverity : CoverityAPI = CoverityAPI(configs)
+        return
+def coverity_intercept_compilation_step(db : pymongo.MongoClient, configs : dict, compile_cmd : str, coverity_bin_path : str, app_path : str, compilation_tag : str, coverity : CoverityAPI, do_panic_delete : bool):
 
     # start build with the chosen kraft command to be intercepted by cov-build
-    if not coverity.intercept_build(compile_cmd, configs["coverityAPI"]["covSuitePath"], app_path):
+    if not coverity.intercept_build(compile_cmd, coverity_bin_path, app_path):
         logger.critical("Failed intercepting build")
-        panic_delete_compilation(db, compilation_tag)
+        if do_panic_delete: panic_delete_compilation(db, compilation_tag)
         db.close()
         exit(9)
-        
+    return
 
-    # after the intercepted build finished, now we also have C source files that can be analyzed
+def find_compilation_coverage_step(db : pymongo.MongoClient, app_build_dir : str, compilation_tag : str, app_path : str, configs : dict, do_panic_delete : bool):
+     # after the intercepted build finished, now we also have C source files that can be analyzed
+    import time
+    start_time = time.time()
     try:
 
         for (current_lib, _, uk_files) in os.walk(app_build_dir, topdown=True):
 
             for file in uk_files:
                 
-                # first filter, get *.o.cmd, kconfig directory has same format of files but are weird
+                # first filter, get *.o.cmd, kconfig directory has same format of files but they are weird
                 if file[-6 : ] == ".o.cmd" and current_lib.split("/")[-1] != "kconfig":
                     
                     o_cmd_file_abs_path = f"{current_lib}/{file}"
@@ -474,7 +461,7 @@ def analyze_application_sources(db : pymongo.MongoClient, compilation_tag : str,
                     logger.debug(f"|||||||||||||||||||||||{src_path}||||||||||||||||||||||||||||||")
 
                     try:
-                        get_source_compile_coverage(
+                        src_doc : dict= get_source_compile_coverage(
                             db=db,
                             compilation_tag=compilation_tag,
                             lib_name=current_lib.split("/")[-1],
@@ -483,25 +470,31 @@ def analyze_application_sources(db : pymongo.MongoClient, compilation_tag : str,
                             src_path=src_path,
                             configs=configs
                         )
+
                     except Exception as e:
                         logger.critical(e)
-                        panic_delete_compilation(db, compilation_tag)
+                        if do_panic_delete: panic_delete_compilation(db, compilation_tag)
                         exit(7)
     except Exception as e:
         logger.critical(e)
-        panic_delete_compilation(db, compilation_tag)
+        if do_panic_delete: panic_delete_compilation(db, compilation_tag)
         db.close()
         exit(8)
 
+    logger.info(f"Compilation coverage research was done in : {time.time() - start_time} by analyzing {lines_of_code} and {blocks_of_code} blocks")
+
+    return
+
+def coverity_submit_step(db : pymongo.MongoClient, app_path : str, compile_cmd : str, compilation_tag : str, coverity : CoverityAPI, do_panic_delete : bool):
+
     if not coverity.submit_build(app_path, compile_cmd, compilation_tag):
-        panic_delete_compilation(compilation_tag)
+        if do_panic_delete: panic_delete_compilation(db, compilation_tag)
         logger.critical("Failed uploading build to Coverity for static analysis. Exiting")
         db.close()
         exit(1)
-    
-    # used to scrape crucial metadata for further fetching defects
-    coverity.init_snapshot_and_project_views()
+    return
 
+def coverity_wait_recent_snapshot_step(db : pymongo.MongoClient, configs : dict, compilation_tag : str, coverity : CoverityAPI, do_panic_delete : bool):
     # busy wait until the most recent snapshot is the one that has been uploaded now
     current_snapshot_retries = 0
     try:
@@ -510,52 +503,95 @@ def analyze_application_sources(db : pymongo.MongoClient, compilation_tag : str,
             current_snapshot_retries += 1
 
         if current_snapshot_retries == configs['coverityAPI']['recentSnapshotRetries']:
-            panic_delete_compilation(db, compilation_tag)
+            if do_panic_delete: panic_delete_compilation(db, compilation_tag)
             logger.critical(f"All {current_snapshot_retries} retries for finding recent snapshot used.")
             db.close()
             exit(6)
 
     # authentication failed before fetching the most recent snapshot
     except TimeoutException:
-        panic_delete_compilation(db, compilation_tag)
+        if do_panic_delete: panic_delete_compilation(db, compilation_tag)
         logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since authentication failed")
         db.close()
         exit(2)
 
     # timeout during waiting for the interceptor to catch a request containg any data about the snapshots no matter if the data is correct or not
     except InterceptorTimeout:
-        panic_delete_compilation(db, compilation_tag)
+        if do_panic_delete: panic_delete_compilation(db, compilation_tag)
         db.close()
         exit(3)
-
+    return
+def coverity_get_defects_step(db : pymongo, compilation_tag : str, coverity : CoverityAPI, do_panic_delete : bool) -> list[CoverityDefect]:
     # we waited for the most recent snapshot to be the one resulted from the current file submition
     # now get the defects found 
     try:
-        coverity.fetch_and_cache_recent_defects(compilation_tag)
+        coverity.fetch_and_cache_recent_defects_1(compilation_tag)
 
     # authentication or web interaction (clicking the most recent snapshot cell)
     except TimeoutException:
-        panic_delete_compilation(db, compilation_tag)
+        if do_panic_delete: panic_delete_compilation(db, compilation_tag)
         logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since authentication or double click interaction with the most recent snapshot cell")
         db.close()
         exit(4)
 
     except InterceptorTimeout:
-        panic_delete_compilation(db, compilation_tag)
+        if do_panic_delete: panic_delete_compilation(db, compilation_tag)
         logger.critical(f"Deleted compilation/app \"{compilation_tag}\" from db since request for defects got timeout")
         db.close()
         exit(5)
 
     # get the Coverity defects, cache them until we finish analyzing source files
-    cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(coverity.prepare_defects_for_db(d, compilation_tag)), coverity.cached_last_defect_results))
+    cov_defects : list[AbstractLineDefect] = list(map(lambda d : CoverityDefect(prepare_coverity_defects_for_db(d, compilation_tag)), coverity.cached_last_defect_results))
     
     # we do not need these cached results anymore, maybe we can save some memory
     del coverity.cached_last_defect_results
     del coverity.cached_recent_snapshot
 
+    return cov_defects
+
+def analyze_application_sources(db : pymongo.MongoClient, compilation_tag : str, app_build_dir : str, app_path : str, compile_cmd : str, configs : dict):
+
+    # main logic to register a new compilation
+    # 1. compile to Unikraft app using the coverity tools and kraft
+    # 2. recompile every source individually in order to include source file data in the database (such as compile blocks through instrumentation)
+    # 3. submit the build to the Coverity platform
+    # 4. wait for the Coverity build to be analyzed
+    # 5. fetch Coverity defects and insert them in the database along with data for every source file
+
+    # Up to commit `7560d9468e4dfc22cb7a7b79ba22fc8913bbd4ef` the logic was:
+    # 1. compile to Unikraft app using the coverity tools and kraft
+    # 2. recompile every source individually in order to include source file data in the database (such as compile blocks)
+    # 3. submit the build to the Coverity platform
+    # 4. wait for the Coverity build to be analyzed
+    # 5. fetch Coverity defects and insert them in the database along with data for every source file
+
+    # Old logic is more efficient since submiting a build takes time that can be used for doing recompilation and instrumentation
+    # but since you cannot delete a submited snapshot in Coverity Scan, we whould introduce potential wrong builds that would fail later
+    # at recompilations and instrumentation
+
+    # New logic will do recompilation and instrumentation first, and if any Exception occurs, delete current app from DB and exit
+    # so that we whould not submit a failing build to Coverity
+
+    # init interface between Coverity and Unikraft scanner tool
+    coverity : CoverityAPI = CoverityAPI(configs, app_path)
+    coverity_intercept_compilation_step(db, configs, compile_cmd, configs["coverityAPI"]["covSuitePath"], app_path, compilation_tag, coverity, True)
+        
+    find_compilation_coverage_step(db, app_build_dir, compilation_tag, app_path, configs, True)
+
+    coverity_submit_step(db, app_path, compile_cmd, compilation_tag, coverity, True)
+    
+    # used to scrape crucial metadata for further defects fetching
+    coverity.init_snapshot_and_project_views()
+
+    # wait for uploaded build to finish being analyzed and appear as snapshot
+    coverity_wait_recent_snapshot_step(db, configs, compilation_tag, coverity, True)
+
+    # get defects
+    cov_defects = coverity_get_defects_step(db, compilation_tag, coverity, True)
+
     insert_defects_in_db(db, cov_defects, compilation_tag)
 
-def add_app_subcommand(db : pymongo.MongoClient, app_workspace : str, app_build_dir : str, compilation_tag : str, app_format : str, compile_command : str, configs : dict):
+def add_app_subcommand(db : pymongo.MongoClient, app_workspace : str, app_build_dir : str, compilation_tag : str, app_format : str, compile_command : str, configs : dict, is_partial : bool):
 
 
     # check if an identic compilation occured
@@ -565,7 +601,8 @@ def add_app_subcommand(db : pymongo.MongoClient, app_workspace : str, app_build_
         )
     if existing_compilation != None:
         logger.critical(f"An existing compilation has been previously registered with this tag and app\n{existing_compilation}")
-        return
+        db.close()
+        exit(15)
     
     logger.info(f"No compilation has been found. Proceeding with analyzing source {app_workspace}")
 
@@ -573,9 +610,77 @@ def add_app_subcommand(db : pymongo.MongoClient, app_workspace : str, app_build_
         {
             "tag" : compilation_tag,
             "app": app_workspace,
-            "format" : app_format
+            "format" : app_format,
+            "partial_status" : is_partial
         }
     ).inserted_id
     logger.debug(f"New compilation has now id {compilation_id}")
 
-    analyze_application_sources(db, compilation_tag, app_build_dir, app_workspace, compile_command, configs)
+    if not is_partial:
+        analyze_application_sources(db, compilation_tag, app_build_dir, app_workspace, compile_command, configs)
+        with open(configs['outfile'],"a") as out:
+            out.write(f"Registering the {compilation_tag} has been completed.")
+    else:
+        coverity : CoverityAPI = CoverityAPI(configs, app_workspace)
+        coverity_intercept_compilation_step(db, configs, compile_command, configs["coverityAPI"]['covSuitePath'], app_workspace, compilation_tag, coverity, True)
+        find_compilation_coverage_step(db, app_build_dir, compilation_tag, app_workspace, configs, False)
+        logger.info(f"Finished processing compilation coverage for {app_workspace} with tag {compilation_tag}.")
+
+        with open(configs['outfile'],"a") as out:
+            out.write(f"Compilation {compilation_tag} has been partially registered to Unikraft Scanner.\n Only the compilation coverage has been researched and scanned defects are missing. You will need to submit the build archive created at {app_workspace}/cov-int, download defects from Coverity platform and enrich the partial compilation with them.\n")
+    
+    return
+
+def download_coverity_most_recent(db : pymongo.MongoClient, compilation_tag : str, configs : dict, download_path : str):
+
+    existing_compilation = db[DATABASE][COMPILATION_COLLECTION].find_one(
+                    {"tag" : compilation_tag}
+        )
+    
+    if existing_compilation != None:
+        logger.debug(f"Compilation tag exists which means that the compilation has been previously registered. Continue...")
+    else:
+        logger.critical(f"Compilation {compilation_tag} does not exist. Cannot download results from non existing compilation")
+        exit(16)
+
+    # init interface between Coverity and Unikraft scanner tool
+    coverity : CoverityAPI = CoverityAPI(configs, download_path)
+
+    # used to scrape crucial metadata for further defects fetching
+    coverity.init_snapshot_and_project_views()
+
+    coverity_wait_recent_snapshot_step(db, configs, compilation_tag, coverity, False)
+
+    coverity_get_defects_step(db, compilation_tag, coverity, False)
+
+    return
+
+def enrich_coverity_compilation(db : pymongo.MongoClient, compilation_tag : str, results_document_path : str):
+
+    existing_compilation = db[DATABASE][COMPILATION_COLLECTION].find_one(
+                            {"tag" : compilation_tag}
+                        )
+    
+    if existing_compilation != None:
+        logger.debug(f"Compilation tag exists which means that the compilation has been previously registered. Continue...")
+    else:
+        logger.critical(f"Compilation {compilation_tag} does not exist. Cannot enrich with results a non existing compilation")
+        exit(17)
+
+    cov_defects : list[AbstractLineDefect] = []
+    with open(results_document_path, 'r', encoding="utf-8-sig") as f:
+            csv_lines = csv.DictReader(f)
+            for line in csv_lines:
+                print("--------------------")
+                print(line)
+                defect = CoverityDefect(prepare_coverity_defects_for_db(line, compilation_tag))
+                cov_defects.append(defect)
+    
+    
+    insert_defects_in_db(db, cov_defects, compilation_tag)
+
+    db[DATABASE][SOURCES_COLLECTION].update_one(
+        filter={"tag" : compilation_tag},
+        update={"$set" : {"partial_status" : False}}
+    )
+    return

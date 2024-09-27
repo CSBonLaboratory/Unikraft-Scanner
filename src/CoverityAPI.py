@@ -22,6 +22,7 @@ import re
 import shutil
 import time
 from logging import FileHandler
+import csv
 
 
 logger = logging.getLogger(LOGGER_NAME)
@@ -47,7 +48,7 @@ def dummy_response_interceptor(request : Request, response : Response):
 
 def recent_snapshot_response_interceptor(request : Request, response : Response):
 
-    coverityAPI : CoverityAPI = CoverityAPI(None)
+    coverityAPI : CoverityAPI = CoverityAPI(configs=None, defects_download_path=None)
 
     if coverityAPI.recent_snapshot_state in [RecentSnapshotStates.NOT_STARTED, RecentSnapshotStates.FOUND]:
         logger.debug(f"RECENT SNAPSHOT: Ignoring {request.url} for recent snapshot since state is {coverityAPI.recent_snapshot_state.name}")
@@ -78,7 +79,7 @@ def recent_snapshot_response_interceptor(request : Request, response : Response)
 
 def defects_response_interceptor(request : Request, response : Response):
 
-    coverityAPI : CoverityAPI = CoverityAPI(None)
+    coverityAPI : CoverityAPI = CoverityAPI(configs=None, defects_download_path=None)
 
     logger.debug(f"RECENT DEFECTS: Investigating {request.url}")
 
@@ -131,7 +132,7 @@ class CoverityAPI(object):
     unknown_snapshot : bool
     snapshot_polling_seconds : int
 
-    def __new__(cls, configs : dict | None) -> None:
+    def __new__(cls, configs : dict | None, defects_download_path : str) -> None:
         if not hasattr(cls, 'instance') and configs != None:
             
             cls.instance : CoverityAPI = super(CoverityAPI, cls).__new__(cls)
@@ -143,8 +144,12 @@ class CoverityAPI(object):
 
             cls.instance.unknown_snapshot = True
             cls.instance.snapshot_polling_seconds = configs["coverityAPI"]['snapshotPollingSeconds']
-            
+            cls.instance.defects_download_path =defects_download_path
             cls.instance.options = Options()
+            cls.instance.options.set_preference("browser.download.dir", defects_download_path)
+            cls.instance.options.set_preference("browser.download.manager.showWhenStarting", True)
+            cls.instance.options.set_preference("browser.helperApps.neverAsk.saveToDisk", "application/octet-stream")
+            cls.instance.options.set_preference("browser.download.folderList", 2)
             cls.instance.options.binary_location = configs["coverityAPI"]["firefoxPath"]
             gecko_service = Service(configs["coverityAPI"]["geckoPath"])
             cls.instance.browser = webdriver.Firefox(options=cls.instance.options, service=gecko_service)
@@ -183,16 +188,6 @@ class CoverityAPI(object):
         self.is_auth = True
 
         return
-
-    def prepare_defects_for_db(self, defect : dict, compilation_tag) -> dict:
-
-        # just remove the / from the beggining of the path, Coverity adds its since the archive submited is considered to be the whole filesystem
-        defect['displayFile'] = defect['displayFile'][1 : ]
-
-        # add compilation tag to the defect dict
-        defect['compilation_tag'] = compilation_tag
-
-        return defect
     
     def poll_recent_snapshot(self, compilation_tag : str | None) -> bool:
 
@@ -229,12 +224,13 @@ class CoverityAPI(object):
             raise te
 
         logger.debug("Clicked on more options. Next choose `All in project` snapshots option")
-        time.sleep(1)
+        time.sleep(2)
 
         try:
-            # "All in project" snapshot button should be searched by CSS instead of XPATH, sicne users cand add other buttons before it and break the XPATH ordering
-            all_in_snapshot = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, "/html/body/cim-root/cim-shell/div/cim-sidebar/nav/div/div[9]/div/ul/li[1]/div/a")))
+            
+            all_in_snapshot = WebDriverWait(browser, self.scraper_wait).until(EC.presence_of_element_located((By.XPATH, "/html/body/cim-root/cim-shell/div/cim-sidebar/nav/div/div[9]/div/ul/li[1]/div/a")))
 
+            WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, "/html/body/cim-root/cim-shell/div/cim-sidebar/nav/div/div[9]/div/ul/li[1]/div/a")))
             # this is the first time calling this function so we need to find the snapshot view id and project view id
             if self.unknown_snapshot:
                 all_in_snapshot_element = browser.find_element(By.XPATH, "/html/body/cim-root/cim-shell/div/cim-sidebar/nav/div/div[9]/div/ul/li[1]/div/a")
@@ -265,6 +261,8 @@ class CoverityAPI(object):
 
             logger.debug("Clicked on `All in project` snapshot option")
 
+            time.sleep(2)
+
         except TimeoutException as te:
             logger.critical("Cannot click on the `All in project` snapshot option")
             raise te
@@ -278,7 +276,7 @@ class CoverityAPI(object):
                 # timeout inside the interceptor
                 if self.recent_snapshot_state != RecentSnapshotStates.FOUND:
                     logger.critical(f"Interceptor timeout. Expected {RecentSnapshotStates.FOUND.name}, got {self.recent_snapshot_state.name}")
-                    raise InterceptorTimeout()
+                    return False
                 
             # reinit the state of the snapshots interceptor maybe for further use
             self.recent_snapshot_state = RecentSnapshotStates.NOT_STARTED
@@ -305,6 +303,323 @@ class CoverityAPI(object):
     
     def init_snapshot_and_project_views(self):
         self.poll_recent_snapshot(None)
+
+    def remove_snapshot_view(self) -> None:
+
+        browser = self.browser
+
+        try:
+            views_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="views-button"]')))
+            views_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on burger button in order to add new snapshot view")
+            raise te
+
+        logger.debug("Clicked on burger button. Now try to click arrow button of the first snapshot view.")
+        time.sleep(2)
+
+        try:
+            arrow_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/cim-root/cim-shell/div/cim-sidebar/nav/div/div[2]/div/ul/li[1]/div/a/span')))
+            arrow_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on arrow button of the first snapshot view.")
+            raise te
+
+        logger.debug("Clicked on arrow button. Now click on `Delete...` button")
+        time.sleep(2)
+
+        try:
+            delete_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="ui-menu-item-remove"]')))
+            delete_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on `Delete...` button")
+            raise te
+        
+        logger.debug("Click on `Delete...` button. Next click on Delete")
+        time.sleep(2)
+
+        try:
+            delete_ok = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/simple-modal-holder/simple-modal-wrapper/div/cim-delete-modal/cim-base-modal/div/div[3]/div/div/button[2]/span')))
+            delete_ok.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on Delete last button")
+            raise te
+        
+        logger.debug("Clicked on last Delete button. Now click back on burger button to go to the first state before this operation")
+        time.sleep(2)
+
+        try:
+            views_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="views-button"]')))
+            views_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on burger button in order to go to the start state before this operation")
+            raise te
+
+        logger.debug("Delete the snapshot linked to the most added compilation. Great success !")
+
+        return
+
+    def __create_snapshot_view(self, compilation_tag : str) -> None:
+        
+        browser = self.browser
+
+        try:
+            views_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="views-button"]')))
+            views_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on burger button in order to add new snapshot view")
+            raise te
+
+        logger.debug("Clicked on burger button. Now try to click arrow button in `Issues: By Snapshot`.")
+        time.sleep(2)
+
+        try:
+            arrow_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/cim-root/cim-shell/div/cim-sidebar/nav/div/div[2]/div/h4/span')))
+            arrow_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on arrow button in `Issues: By snapshot`.")
+            raise te
+
+        logger.debug("Clicked on arrow button. Now click on `Add New View...` button")
+        time.sleep(2)
+
+        try:
+            add_new_view_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/cim-root/cim-shell/div/cim-sidebar/div[1]/cim-context-menu/div/ul/li[1]/span')))
+            add_new_view_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on `Add new View...` in `Issues: By Snapshot`")
+            raise te
+        
+        logger.debug("Clicked on `Add new View...` in `Issues: By Snapshot`. Now write compilation tag as snapshot name")
+        time.sleep(2)
+
+        try:
+            add_as_input_element = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="name"]')))
+            add_as_input_element.send_keys(compilation_tag)
+        except TimeoutException as te:
+            logger.critical("Cannot name the snapshot as the compilation tag")
+            raise te
+        
+        logger.debug("Added name of the snapshot as the compialtino tag. Now click on OK button")
+        time.sleep(2)
+
+        try:
+            ok_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/simple-modal-holder/simple-modal-wrapper/div/cim-add-view-modal/cim-base-modal/div/div[3]/div/div/button[2]')))
+            ok_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on OK button after naming the snapshot as the compilation tag")
+            raise te
+        
+        logger.debug("Clicked on OK button. Click again on burger button to return to initial web view state.")
+        time.sleep(2)
+
+        try:
+            views_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="views-button"]')))
+            views_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on burger button in order to return to initial web view state.")
+            raise te
+
+        logger.debug("Clicked on burger button. Adding new snapshot based on compiltation tag finished.")
+
+
+        return
+
+    def fetch_and_cache_recent_defects_1(self, compilation_tag : str) -> None:
+        import time
+
+        if not self.is_auth:
+            logger.warn("Authenticating before fetching most recent defects...")
+            try:
+                self.auth()
+            except TimeoutException as te:
+                logger.critical("Authentication failed during fetching defects in the most recent snapshot")
+                raise te
+            
+        browser = self.browser
+
+        # try to intercept response body which contains all snapshot information
+        browser.switch_to.new_window('tab')
+
+        browser.get(self.snapshots_url)
+        
+        try:
+            recent_snapshot_cell = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/cim-root/cim-shell/div/cim-project-view/div[1]/div[1]/div[1]/cim-data-table/angular-slickgrid/div/div/div[4]/div[3]/div/div[1]/div[2]')))
+            double_click_snapshot_cell = ActionChains(browser).double_click(recent_snapshot_cell).perform()
+        except TimeoutException as te:                                                                                    
+            logger.critical("Cannot find most recent snapshot cell when fetching defects")
+            raise te
+        time.sleep(2)
+
+        # Add more columns
+        try:
+            edit_settings_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="current-selection-settings"]')))
+            edit_settings_button.click()
+        except TimeoutException as te:
+                logger.critical("Cannot find `edit settings` button")
+                raise te
+        
+        logger.debug("Opened settings in order to add additional columns in the snapshot view. Next click on `Save as Copy` button")
+        time.sleep(2)
+
+        try:
+            save_as_copy_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/simple-modal-holder/simple-modal-wrapper/div/cim-setting-modal/cim-base-modal/div/div[2]/div/div/form/ul/li[2]/label')))
+            save_as_copy_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on `Save as Copy` button")
+            raise te
+
+        logger.debug("Clicked on `Save as Copy` button. Next click the `Column` button")
+        time.sleep(2)
+
+        try:
+            column_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/simple-modal-holder/simple-modal-wrapper/div/cim-setting-modal/cim-base-modal/div/div[2]/div/div/fieldset/div/ul/li[2]/a/span')))
+            column_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on `Column` button")
+            raise te
+
+        logger.debug("Clicked on column button. Next choose `Checker` column")
+        time.sleep(2)
+
+        try:
+            checker_column = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="select-checker"]')))
+            browser.execute_script("arguments[0].scrollIntoView(true);", checker_column)
+            time.sleep(1)
+            checker_column.click()
+        except TimeoutException as te:
+            logger.critical("Cannot choose `Checker` column")
+            raise te
+
+        logger.debug("Clicked on `Checker` column. Next choose `CWE` column")
+        time.sleep(2)
+
+        try:
+            cwe_column = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="select-cwe"]')))
+            browser.execute_script("arguments[0].scrollIntoView(true);", cwe_column)
+            time.sleep(1)
+            cwe_column.click()
+        except TimeoutException as te:
+            logger.critical("Cannot choose `CWE` column")
+            raise te
+        
+        logger.debug("Clicked on `CWE` column. Next choose `Line Number` column")
+        time.sleep(2)
+
+        try:
+            line_number_column = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="select-lineNumber"]')))
+            browser.execute_script("arguments[0].scrollIntoView(true);", line_number_column)
+            time.sleep(1)
+            line_number_column.click()
+        except TimeoutException as te:
+            logger.critical("Cannot choose `Line Number` column")
+            raise te
+        
+        logger.debug("Clicked on `Line Number` column. Next choose `Score` column")
+        time.sleep(2)
+
+        try:
+            score_column = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="select-score"]')))
+            browser.execute_script("arguments[0].scrollIntoView(true);", score_column)
+            time.sleep(1)
+            score_column.click()
+        except TimeoutException as te:
+            logger.critical("Cannot choose `Score` column")
+            raise te
+
+        logger.debug("Clicked on `Score` column. Next enter name of the snapshot issue copy")
+        time.sleep(2)
+
+        try:
+            snapshot_copy_input = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="view-name"]')))
+            snapshot_copy_input.clear()
+            snapshot_copy_input.send_keys(compilation_tag)
+        except TimeoutException as te:
+            logger.critical("Cannot input the name of the snapshot issue copy")
+            raise te
+
+        logger.debug("Chose a name for the snapshot issue copy. Next click on `OK` button.")
+        time.sleep(2)
+
+        try:
+            ok_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/simple-modal-holder/simple-modal-wrapper/div/cim-setting-modal/cim-base-modal/div/div[3]/div/div/button[2]')))
+            ok_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on `OK` button to finish adding more columns. Next will try to click burger button.")
+            raise te
+
+        logger.debug("Finished adding new columns. Now try to click burger button")
+        time.sleep(30)
+
+        try:
+            views_button = WebDriverWait(browser, self.scraper_wait).until(EC.visibility_of_element_located((By.XPATH, '//*[@id="views-button"]')))
+            views_button.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on burger button in order to find the most recent snapshot saved with enhanced collumns")
+            raise te
+
+        logger.debug("Click on burger button, now go to the most recent snapshot (that was created when selected additional columns) arrow button with more options")
+        time.sleep(2)
+
+        try:
+            recent_snapshot_more_options = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/cim-root/cim-shell/div/cim-sidebar/nav/div/div[2]/div/ul/li[1]/div/a/span')))
+            recent_snapshot_more_options.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on most recent snapshot more options arrow button")
+            raise te
+
+        logger.debug("Clicked on more options arrow button at the most recent snapshot. Now click on export csv option")
+
+
+        try:
+            export_csv = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="ui-menu-item-exportcsv"]')))
+            export_csv.click()
+        except TimeoutException as te:
+            logger.critical("Cannot click on `Export CSV` option")
+            raise te
+    
+        logger.debug("Clicked on `Export CSV` option. Now wait for the downloaded defects as csv document to be downloaded")
+            
+        downloading = True
+        download_time = 0
+
+        csv_file_name = compilation_tag.replace(" ", "+") + ".csv"
+
+        download_file_path = None
+
+        while downloading and download_time <= self.scraper_wait:
+
+            time.sleep(1)
+
+            for file_path in os.listdir(self.defects_download_path):
+                if file_path == csv_file_name or re.match(r".*\.csv", file_path):
+                    downloading = False
+                    download_file_path = os.path.join(self.defects_download_path, file_path)
+                    break
+            
+            if downloading:
+                download_time += 1
+
+        if download_time > self.scraper_wait:
+            logger.critical("Timeout exceeded for downloading defects as csv file")
+            raise TimeoutException()
+        
+        logger.debug(f"Defects downloaded as csv file from {download_file_path}")
+
+        with open(download_file_path, 'r') as f:
+            csv_lines = csv.DictReader(f)
+            for line in csv_lines:
+                self.cached_last_defect_results.append(line)
+
+        logger.debug("Parsed defects from csv and cached them")
+
+        try:
+            self.remove_snapshot_view()
+        except TimeoutException as te:
+            raise te
+
+        return
+
 
     def fetch_and_cache_recent_defects(self, compilation_tag : str) -> None:
         
@@ -453,7 +768,7 @@ class CoverityAPI(object):
     
     def intercept_build(self, compile_cmd : str, coverity_suite_path : str, app_path : str) -> bool:
 
-        logger.debug(f"Started intercepting the build with {coverity_suite_path}/cov-build for command {compile_cmd} in app {app_path}")
+        logger.debug(f"Started intercepting the build with {coverity_suite_path} for command {compile_cmd} in app {app_path}")
 
         logs_file_handler : FileHandler = logger.handlers[0]
 
@@ -475,7 +790,7 @@ class CoverityAPI(object):
 
             shutil.rmtree(f"{app_path}/.unikraft")
 
-        cov_build_subprocess = subprocess.Popen(f"{coverity_suite_path}/cov-build --dir cov-int {compile_cmd}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        cov_build_subprocess = subprocess.Popen(f"{coverity_suite_path} --dir cov-int {compile_cmd}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         out, err = cov_build_subprocess.communicate()
 
@@ -485,11 +800,11 @@ class CoverityAPI(object):
 
         logger.debug(f"Output build interception: \n{out.decode()}")
 
-        if compilation_success_msg not in out:
+        logger.warning(f"Error build interception: \n{err.decode()}")
+
+        if (compilation_success_msg not in out) or (cov_build_subprocess.returncode != 0):
             logger.critical(f"The app has compilation issues. The compilation ration should be 100% in order to you the compilation coverage tool")
             return False
-        
-        logger.warning(f"Error build interception: \n{err.decode()}")
 
         if b"No files were emitted." in err:
             logger.critical("The app was previously compiled. Remove the .unikraft directory and try again")

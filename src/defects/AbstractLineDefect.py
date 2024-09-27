@@ -10,5 +10,9 @@ class AbstractLineDefect(MongoEntityInterface, ViewerInterface, StatusInterface)
 
     compilation_tag : str
 
+    id : str
+
+    defects_provider : str
+
     def to_mongo_dict(self) -> dict:
         raise NotImplementedError("to_mongo_dict() is not implemented !")

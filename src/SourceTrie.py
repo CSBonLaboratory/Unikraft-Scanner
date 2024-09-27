@@ -14,11 +14,16 @@ class SourceTrie:
 
     next_nodes : list[SourceTrie] = None
     path_token : str = None
-    info : Union[CSourceDocument, CSourceNoDocument] = None
+
+    # there may be multiple snapshots of the same compiled source file
+    # this scenario is found when viewing multiple Unikraft apps with the `app view` command
+
+    info : list[Union[CSourceDocument, CSourceNoDocument]] = None
     def __init__(self, token : str) -> None:
         # the root will have absolute path up to the UK_WORKDIR
         self.next_nodes = []
         self.path_token = token
+        self.info = []
     def add_node(self, srcs_tokens : list[str], src_doc : Union[CSourceDocument, CSourceNoDocument]) -> None:
         
         correct_child = None
@@ -36,7 +41,7 @@ class SourceTrie:
         if len(srcs_tokens) > 1:
             correct_child.add_node(srcs_tokens[1:], src_doc)
         else:
-            correct_child.info = src_doc
+            correct_child.info.append(src_doc)
     
     def print_trie_view(self, out_file, compilation_tags : list[str] = [], tabs = 0):
 
@@ -50,7 +55,8 @@ class SourceTrie:
             current_node, depth = queue.get()
 
             if current_node.path_token[-2:] == ".c":
-                current_node.info.print_view(depth + 1, out_file, compilation_tags)
+                for i in current_node.info:
+                    i.print_view(depth + 1, out_file, compilation_tags)
             else:
                 out_file.write(depth * PLACEHOLDER_NODE + current_node.path_token + "\n")
 
@@ -70,7 +76,8 @@ class SourceTrie:
             current_node, depth = queue.get()
 
             if current_node.path_token[-2:] == ".c":
-                current_node.info.print_status(depth + 1, out_file)
+                for i in current_node.info:
+                    i.print_status(depth + 1, out_file)
             else:
                 out_file.write(depth * PLACEHOLDER_NODE + current_node.path_token + "\n")
 

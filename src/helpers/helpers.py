@@ -4,30 +4,13 @@ import logging
 import os
 import re
 import hashlib
-from bson.objectid import ObjectId
-from dataclasses import dataclass
-from typing import Union
 from enum import Enum
 from helpers.CompilationBlock import CompilationBlock
-from helpers.MongoEntityInterface import MongoEntityInterface
 from compilers.CompilerInterface import CompilerInterface
 from compilers.GCC import GCC
 import urllib.request
 
-def git_commit_strategy(real_src_path : str) -> str:
-    src_tokens = real_src_path.split("/")
-
-    src_sub_path = "/".join(src_tokens[:-1])
-
-    src_name = src_tokens[-1]
     
-    proc = subprocess.Popen(f"cd {src_sub_path} && git log -n 1 --pretty=format:%H {src_name}", shell=True, stdout=subprocess.PIPE)
-
-    latest_commit_id_raw, _ = proc.communicate()
-
-    latest_commit_id = latest_commit_id_raw.decode()
-
-    return latest_commit_id
 
 class AppFormat(Enum):
     NATIVE = "native"
@@ -63,7 +46,7 @@ def remove_comments(cpy_src : str):
 
     return 
 
-def hash_strategy(real_src_path) -> str:
+def hash_no_git_commit(real_src_path) -> str:
     sha1 = hashlib.sha1()
 
     with open(real_src_path, 'rb') as f:
@@ -77,96 +60,82 @@ def hash_strategy(real_src_path) -> str:
 
 
 
+class SourceVersionInfo():
+    class SourceStatus(Enum):
+        NEW = 0
+        EXISTING = 1
+        UNKNOWN = 2
+    
+    status : SourceStatus = SourceStatus.UNKNOWN
+    git_file_commit_hash : str = None
+    git_repo_commit_hash : str = None
 
-class SourceStatus(Enum):
-    NEW = 0
-    DEPRECATED = 1
-    EXISTING = 2
-    UNKNOWN = 3
-
+ 
 class CoverageStatus(Enum):
     NOTHING = 0
     PARTIAL = 1
     TOTAL = 2
 
-    
-@dataclass
-class SourceVersionStrategy(MongoEntityInterface):
-
-    version_value = None
-
-    version_key = None
-
-    def apply_strategy(self, real_src_path : str):
-        pass
-
-    def to_mongo_dict(self) -> dict:
-        return {self.version_key : self.version_value}
-
-@dataclass(init=False)
-class GitCommitStrategy(SourceVersionStrategy):
-
-    version_key : str = "git_commit_id"
-    version_value : str = None
-    
-    def __init__(self) -> None:
-        self.version_key = "git_commit_id"
-
-    def apply_strategy(self, real_src_path: str):
-        self.version_value = git_commit_strategy(real_src_path)
-        
-    
-    def to_mongo_dict(self) -> dict:
-        return super().to_mongo_dict()
 
     
-@dataclass(init=False)
-class SHA1Strategy(SourceVersionStrategy):
-
-    version_key : str = "sha1_id"
-    version_value : str = None
-
-    def __init__(self) -> None:
-        self.version_key = "sha1_id"
-
-    def apply_strategy(self, real_src_path: str):
-        self.version_value = hash_strategy(real_src_path)
-    
-    def to_mongo_dict(self) -> dict:
-        return super().to_mongo_dict()
-
-
-def get_source_version_info(real_src_path : str) -> SourceVersionStrategy:
+def get_source_git_commit_hashes(real_src_path : str) -> list[str] | None:
 
     '''
-    Uses the most apropriate hashing strategy for versioning the file.
-
-    Firstly, it tries to get the latest git commit id of the file
-    Otherwise, hashes the file contents using sha-1.
+    Retrieves the lastest git commit hash associated with this file
 
     Args:
         real_src_path(str): Absolute path of the source file
 
     Returns:
-        A SourceVersionStrategy instance for this file
+        A list of 2 elements where the first is the latest git commit of the source file while the second is the latest git commit of the entire repo
     '''
 
     from coverage import LOGGER_NAME
     logger = logging.getLogger(LOGGER_NAME)
 
-    latest_commit_id = git_commit_strategy(real_src_path)
-    
-    if latest_commit_id != "":
-        version = GitCommitStrategy()
-        version.version_value = latest_commit_id
+    src_tokens = real_src_path.split("/")
 
-        return version
+    src_sub_path = "/".join(src_tokens[:-1])
 
-    logger.warning(f"{real_src_path} is not part of a valid git repository or submodule. Defaulting to SHA1 strategy ...")
+    src_name = src_tokens[-1]
+
+    ans = []
     
-    version = SHA1Strategy()
-    version.apply_strategy(real_src_path)
-    return version
+    proc = subprocess.Popen(f"cd {src_sub_path} && git log -n 1 --pretty=format:%H {src_name}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    latest_commit_id_raw, err = proc.communicate()
+
+    latest_commit_id = latest_commit_id_raw.decode()
+
+    if proc.returncode != 0:
+        logger.critical(f"Error while getting git commit hash for {real_src_path}, results in exit code {proc.returncode}: {err.decode()}")
+        return None
+    
+    logger.debug(f"Got git file commit hash for {real_src_path} : {latest_commit_id}")
+
+    proc.terminate()
+
+    ans.append(latest_commit_id)
+
+    proc = subprocess.Popen(f"cd {src_sub_path} && git log -n 1 --pretty=format:%H ", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    repo_latest_commit_raw, err = proc.communicate()
+
+    repo_latest_commit = repo_latest_commit_raw.decode()
+
+    if proc.returncode != 0:
+        logger.critical(f"Error while getting latest repo git commit hash, return code {proc.returncode} and error: {err.decode()}")
+        return None
+
+    logger.debug(f"Repo latest git commit hash for {real_src_path}: {repo_latest_commit}")
+
+    proc.terminate()
+
+    ans.append(repo_latest_commit)
+
+    return ans
+
+
 
 
 def find_latest_schema_remote_version() -> int:
@@ -184,13 +153,17 @@ def find_latest_schema_local_version() -> int:
     return max([int(re.findall(r"config_(\d+).yaml", f)[0]) for f in os.listdir("tool_configs/") if os.path.isfile(os.path.join("tool_configs/", f))])
 
 
-def trigger_compilation_blocks(activation_cmd : str, preproc_log_file : str) -> list[int]:
+def trigger_compilation_blocks(activation_cmd : str, preproc_log_file : str, src_path : str) -> list[int]:
 
     '''
     Opens a shell process that executes the compilation command of a source file.
 
     Args:
         activation_cmd(str): Compilation command
+
+        preproc_log_file(str): Absolute path to a file that will store preprocessor stderr such as warnings and errors
+
+        src_path(str): Absolute path to the analyzed source file
     
     Returns:
         A list of indexes of compilation blocks which were activated after rerunning the command.
@@ -205,8 +178,9 @@ def trigger_compilation_blocks(activation_cmd : str, preproc_log_file : str) -> 
     
     warnings = warnings_raw.decode()
 
-    # Write C preprocessor warning. It can be warnings 
+    # Write C preprocessor warnings. It can be warnings or errors
     f = open(preproc_log_file,"a")
+    f.write(f"------------------------------------------------------------ {src_path} -----------------------------------------")
     f.write(warnings)
     f.close()
 
@@ -385,3 +359,14 @@ def try_compilers_for_src_path(command : str, o_cmd_file_abs_path : str) -> str 
             return src_path
         
     return None
+
+
+def prepare_coverity_defects_for_db(defect : dict, compilation_tag : str) -> dict:
+
+    # just remove the / from the beggining of the path, Coverity adds its since the archive submited is considered to be the whole filesystem
+    defect['File'] = defect['File'][1 : ]
+
+    # add compilation tag to the defect dict
+    defect['compilation_tag'] = compilation_tag
+
+    return defect

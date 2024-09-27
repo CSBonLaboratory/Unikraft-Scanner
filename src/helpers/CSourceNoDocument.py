@@ -10,7 +10,14 @@ from io import TextIOWrapper
 class CSourceNoDocument(StatusInterface):
 
     source_path : str
+
     universal_lines : int
+
+    git_file_commit_hash : str
+
+    git_repo_commit_hash : str
+
+    hash_no_git : str
 
     compile_blocks : list[CompilationBlock] = None
 
@@ -22,7 +29,15 @@ class CSourceNoDocument(StatusInterface):
     def __init__(self, info : dict) -> None:
 
         self.source_path = info['source_path']
+        
         self.universal_lines = info['universal_lines']
+
+        self.git_file_commit_hash = info['git_file_commit_hash']
+
+        self.git_repo_commit_hash = info['git_repo_commit_hash']
+
+        if 'hash_no_git_commit' in info:
+            self.hash_no_git = info['hash_no_git_commit']
         
         if 'compile_blocks' in info:
             self.compile_blocks = [CompilationBlock(block_dict) for block_dict in info['compile_blocks']]
@@ -49,6 +64,12 @@ class CSourceNoDocument(StatusInterface):
             ans += (tabs - 1) * PLACEHOLDER_NODE + f"Lib : {self.lib}\n"  
 
         ans += (tabs - 1) * PLACEHOLDER_NODE + f"Universal lines : {self.universal_lines}\n"
+
+        if self.hash_no_git != None:
+            ans += (tabs - 1) * PLACEHOLDER_NODE + f"{Fore.RED}File is not tracked by any git repo. Source file history may be unreliable{Fore.RESET}. SHA-1 : {self.hash_no_git}"
+        else:
+            ans += (tabs - 1) * PLACEHOLDER_NODE + f"Git commit file hash: {self.git_file_commit_hash}"
+            ans += (tabs - 1) * PLACEHOLDER_NODE + f"Git commit repo hash: {self.git_repo_commit_hash}"
 
         out_file.write(ans)
 

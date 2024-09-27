@@ -67,15 +67,74 @@ View logging information in the file specified by `logfile` option from the conf
 
 View tool output in the file specified by `outfile` option from the config file. Output may be too large for console output. 
 
-Add/register a new app in order to increase compilation/scan coverage: 
+Adding/registering a new app in order to increase compilation/scan coverage can be done in 2 ways:
+The `python3 coverage.py app add` that compiles the Unikraft inage, lets Coverity intercept the build process, sends the Coverity archive to their platform, web-scrapes using Selenium the found defects from said platform and adds enriches the database with these found information. Since the web-scraper is UNSTABLE we will do a semi-automatic quickfix.
+
 ````
-python3 coverage.py app add -s <path to yaml config file from step 8>
+python3 coverage.py app compile -s <path to yaml config file from step 8>
 
                              -a <path to a Unikraft app (you can use the ones compatible with catalog)>
 
                              -t <tag/description (for multi-word put it between double quotes) UNIQUE to both the local DB and Coverity platform>
 
                              -c <kraft build compilation command>
+
+                             -b <optional path where the Unikraft core and libraries are locally compiled>
+````
+
+The seconds method which is the above mentioned quickfix is reprsented by a split of the previously mentioned steps and a manual fetch of found defects from the Coverity platform.
+
+
+````
+python3 coverage.py app compile -s <path to yaml config file from step 8>
+                                
+                                -a <path to a Unikraft app (you can use the ones compatible with catalog)>
+
+                                -t <tag/description (for multi-word put it between double quotes) UNIQUE to both the database and Coverity platform>
+
+                                -c <kraft build compilation command>
+
+                                -b <optional path where the Unikraft core and libraries are locally compiled>
+````
+
+Now you have compiled the Unikraft image and allowed Coverity to also intercept the build.
+The result is an archive found in the `-a` directory. In addition, information about the involved source code files from Unikraft is written to the database. However, the information structure is incomplete; we need to 'enrich' it with defects found after Coverity analyzes the archive.
+
+We need to send the archive to the Coverity platform.
+
+````
+python3 coverage.py app submit -s <path to yaml config file from step 8>
+
+                               -c <kraft compilation command used in the previous step>
+
+                               -t <UNIQUE tag used in the previous step>
+
+                               -a <path to the archive (usually found the the app directory that has been previously compiled)>
+````
+Now, the manual part begins, since the web-scraper is not stable and various issues may appepar.
+
+Go to the Coverity Scan project `https://scan.coverity.com/projects/unikraft-scanning?tab=overview`, log in with the the credentials configured during the `setup` phase. Now click `View Defects` button.
+
+From the top-left burger button, go to `SNAPSHOTS` pannel and click on `All in Project`. This is where all app registeration attempts where made with the Unikraft Scanner tool.
+
+Wait for the analysis process to finish (the snapshot whose name is the tag used during `app compile` step will eventually appear in the table).
+
+Double click on the snapshot.
+
+In the top-left corner, click of the Settings wheel symbol, click on the `Column` button and select the additional columns: `Checker`, `CWE`, `Line Number`, `Score`.
+
+Toggle the `Save as Copy` and enter a name for this updated snapshot.
+
+Go back to the top-left burger button, go to `ISSUES: BY SNAPSHOT`, click on the small arrow button coresponding to the newly created snapshot and click `Export CSV`.
+
+Congratulation we have fetched the analysis results. The only step is to also include these found defects in the database
+
+````
+python3 coverage app enrich -s <path to yaml config file from step 8>
+
+                            -t <UNIQUE tag used in the previous step>
+
+                            -r <path to where the csv file with the defects has been downloaded to>
 ````
 
 You can check the log file to see tool progress in real time. After tool execution, go to the Coverity Scan project `https://scan.coverity.com/projects/unikraft-scanning?tab=overview`, click the `View Defects` button and inspect found defects.

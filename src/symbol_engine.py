@@ -55,7 +55,7 @@ def get_full_symbol_condition(start_line : int, lines : list[str]) -> tuple[str,
 
     return full_condition, i + 1
 
-def find_compilation_blocks_and_lines(src_path : str, do_remove_comments : bool) -> tuple[list[CompilationBlock], int]:
+def find_compilation_blocks_and_lines(src_path : str, do_remove_comments : bool) -> tuple[list[CompilationBlock], int, int]:
 
     '''
     Parses the C source file and finds compilation blocks (also cases of nested compilation blocks)
@@ -67,6 +67,7 @@ def find_compilation_blocks_and_lines(src_path : str, do_remove_comments : bool)
     Returns:
         A tuple where the first element is a list of CompilationBlock instances and 
         the second is the number of lines that are compiled no matter what symbols are used (universal)
+        the third is the number of code lines analyzed
     '''
     from coverage import LOGGER_NAME
     logger = logging.getLogger(LOGGER_NAME)
@@ -88,10 +89,13 @@ def find_compilation_blocks_and_lines(src_path : str, do_remove_comments : bool)
 
     i = 0
 
+    statistic_lines = 0
+
     while i < len(lines):
         
         if (lines[i].find("#ifdef") != -1 or lines[i].find("#if") != -1 or lines[i].find("#ifndef") != -1):
-
+            
+            statistic_lines += 1
             current_condition, line_idx_after_condition = get_full_symbol_condition(i, lines)
 
             if lines[i].find("#ifndef") != -1:
@@ -138,6 +142,7 @@ def find_compilation_blocks_and_lines(src_path : str, do_remove_comments : bool)
 
         elif (lines[i].find("#elif") != -1 or lines[i].find("#else") != -1):
             
+            statistic_lines += 1
             # only #elif may have multiline symbol condition 
             if lines[i].find("#elif") != -1:
                 current_condition, line_idx_after_condition = get_full_symbol_condition(i, lines)
@@ -171,7 +176,8 @@ def find_compilation_blocks_and_lines(src_path : str, do_remove_comments : bool)
             continue
 
         elif lines[i].find("#endif") != -1:
-
+            
+            statistic_lines += 1
             ending_block = nested_directives[-1][-1]
             ending_block.end_line = i + 1
             logger.debug(f"Ending a conditional compilation block starting at {ending_block.start_line}, ending at {ending_block.end_line} with local counter {ending_block.block_counter}")
@@ -188,7 +194,7 @@ def find_compilation_blocks_and_lines(src_path : str, do_remove_comments : bool)
         # its a line which might contain code
         elif lines[i].split() != []:
             
-
+            statistic_lines += 1
             # we still have a unparsed compile block, so the line should be added in its scope not in the global one
             if len(nested_directives) > 0:
                 nested_directives[-1][-1].lines += 1
@@ -206,7 +212,7 @@ def find_compilation_blocks_and_lines(src_path : str, do_remove_comments : bool)
     src_fd.close()
 
     parsed_compilation_blocks.sort(key = lambda cb : cb.block_counter)
-    return (parsed_compilation_blocks, universal_lines)
+    return (parsed_compilation_blocks, universal_lines, statistic_lines)
 
             
             

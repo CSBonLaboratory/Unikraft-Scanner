@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from helpers.CSourceNoDocument import CSourceNoDocument
 from helpers.MongoEntityInterface import MongoEntityInterface
-from helpers.helpers import CoverageStatus, SourceVersionStrategy, GitCommitStrategy, SHA1Strategy
+from helpers.helpers import CoverageStatus
 from helpers.CompilationBlock import CompilationBlock
 from bson.objectid import ObjectId
 from colorama import Fore
@@ -11,14 +11,13 @@ from helpers.StatusInterface import StatusInterface
 from defects.factory_defect import factory_defect
 from defects.AbstractLineDefect import AbstractLineDefect
 from io import TextIOWrapper
+from defects.StaticAnalyzers import StaticAnalyzers
 
 
 @dataclass(init=False)
 class CSourceDocument(CSourceNoDocument, MongoEntityInterface, ViewerInterface, StatusInterface):
 
     triggered_compilations : list[ObjectId]
-    
-    source_version : SourceVersionStrategy
 
     defects : list[AbstractLineDefect]
 
@@ -35,13 +34,6 @@ class CSourceDocument(CSourceNoDocument, MongoEntityInterface, ViewerInterface, 
         else:
             self.triggered_compilations = []
         
-        if "git_commit_id" in mongo_dict:
-            self.source_version = GitCommitStrategy()
-            self.source_version.version_value = mongo_dict["git_commit_id"]
-        elif "sha1_id" in mongo_dict:
-            self.source_version = SHA1Strategy()
-            self.source_version.version_value = mongo_dict["sha1_id"]
-        
         self.lib = mongo_dict["lib"]
 
         if "compiled_stats" in mongo_dict:
@@ -50,7 +42,7 @@ class CSourceDocument(CSourceNoDocument, MongoEntityInterface, ViewerInterface, 
             self.compiled_stats = {}
 
         if 'defects' in mongo_dict:
-            self.defects = [factory_defect(defect_dict) for defect_dict in mongo_dict['defects']]
+            self.defects = [factory_defect(defect_dict, StaticAnalyzers(defect_dict['Provider'])) for defect_dict in mongo_dict['defects']]
         else:
             self.defects = []
 
@@ -84,7 +76,7 @@ class CSourceDocument(CSourceNoDocument, MongoEntityInterface, ViewerInterface, 
                     
         # print the type of source version strategy (git commit hash or sha1 etc.)
 
-        ans += (tabs - 1) * PLACEHOLDER_NODE + PLACEHOLDER_INFO + f"{self.source_version.version_key} : {self.source_version.version_value}" + "\n"
+        ans += (tabs - 1) * PLACEHOLDER_NODE + PLACEHOLDER_INFO + f"{self.git_file_commit_hash} : {self.git_repo_commit_hash}" + "\n"
 
         out_file.write(ans)
 
@@ -179,7 +171,9 @@ class CSourceDocument(CSourceNoDocument, MongoEntityInterface, ViewerInterface, 
         
         ans["triggered_compilations"] = self.triggered_compilations
         
-        ans.update(self.source_version.to_mongo_dict())
+        ans['git_file_commit_hash'] = self.git_file_commit_hash
+
+        ans['git_repo_commit_hash'] = self.git_repo_commit_hash
 
         ans["lib"] = self.lib
 

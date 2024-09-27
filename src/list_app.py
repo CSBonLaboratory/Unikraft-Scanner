@@ -7,7 +7,7 @@ logger = logging.getLogger(LOGGER_NAME)
 
 def get_app_coverage(db : pymongo.MongoClient, compilation_tag : str) -> tuple[int, ...]:
 
-    from coverage import DATABASE, db, SOURCES_COLLECTION
+    from coverage import DATABASE, SOURCES_COLLECTION
 
     total_lines = 0
     compiled_lines = 0
@@ -29,6 +29,8 @@ def get_app_coverage(db : pymongo.MongoClient, compilation_tag : str) -> tuple[i
 
 def print_app_coverage(db : pymongo.MongoClient, compilation_tag, saved_outfile):
 
+    from coverage import DATABASE, COMPILATION_COLLECTION
+
     logger.debug(f"Found app with tag {compilation_tag}")
 
     compiled_lines, total_lines = get_app_coverage(db, compilation_tag)
@@ -49,6 +51,15 @@ def print_app_coverage(db : pymongo.MongoClient, compilation_tag, saved_outfile)
         else:
             out.write(Fore.RED + f"\tRatio:{ratio}\n" + Fore.RESET)
 
+        partial = db[DATABASE][COMPILATION_COLLECTION].find(
+            filter={"tag" : compilation_tag},
+            projection={"_id" : 0, "partial_status" : 1}
+        )
+
+        if partial:
+            out.write(f"\tStatus: {Fore.RED}Partial status. Not enriched with defects yet{Fore.RESET}")
+        else:
+            out.write(f"\tStatus: {Fore.GREEN}Complete{Fore.RESET}")
     return
 
 def list_app_subcommand(db : pymongo.MongoClient, saved_outfile : str):
