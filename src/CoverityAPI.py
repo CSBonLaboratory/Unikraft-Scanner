@@ -65,45 +65,16 @@ def recent_snapshot_response_interceptor(request : Request, response : Response)
             snapshot_payload = json.loads(decode(response.body, response.headers.get('Content-Encoding', 'identity')))['resultSet']['results']
 
             if snapshot_payload == []:
-                coverityAPI.cached_recent_snapshot = None
+                coverityAPI.cached_recent_snapshots = None
             else:
-                coverityAPI.cached_recent_snapshot = snapshot_payload[0]
+                coverityAPI.cached_recent_snapshots = snapshot_payload
 
-            logger.debug(f"Found most recent snapshot {coverityAPI.cached_recent_snapshot}")
+            logger.debug(f"Found most recent snapshots {coverityAPI.cached_recent_snapshots}")
 
             coverityAPI.recent_snapshot_state = RecentSnapshotStates.FOUND
 
             coverityAPI.interceptor_condition.notify()
 
-    return
-
-def defects_response_interceptor(request : Request, response : Response):
-
-    coverityAPI : CoverityAPI = CoverityAPI(configs=None, defects_download_path=None)
-
-    logger.debug(f"RECENT DEFECTS: Investigating {request.url}")
-
-    if coverityAPI.defects_state in [DefectsStates.NOT_STARTED, DefectsStates.FOUND]:
-        logger.debug(f"DEFECTS: Ignoring {request.url} for recent defects since status is {coverityAPI.defects_state.name}")
-        return
-    
-    logger.debug(f"RECENT DEFECTS: Investigating {request.url}")
-    current_defect_view_match = re.match(r"https://scan9\.scan\.coverity\.com/reports/table\.json\?projectId=(\d+)&viewId=(\d+)", request.url)
-
-    if current_defect_view_match:
-        
-        coverityAPI.current_defects_view_id = current_defect_view_match.group(2)
-
-        logger.debug(f"RECENT DEFECTS: Found copy of the defects view with id {coverityAPI.current_defects_view_id} at {request.url}")
-
-        with coverityAPI.interceptor_condition:
-
-            coverityAPI.cached_last_defect_results = json.loads(decode(response.body, response.headers.get('Content-Encoding', 'identity')))['resultSet']['results']
-
-            coverityAPI.defects_state = DefectsStates.FOUND
-
-            coverityAPI.interceptor_condition.notify()
-    
     return
 
 class CoverityAPI(object):
@@ -122,7 +93,8 @@ class CoverityAPI(object):
     defects_state : DefectsStates
     interceptor_condition : Condition
     cached_last_defect_results : list[dict]
-    cached_recent_snapshot : dict
+    cached_recent_snapshots : list[dict]
+    cached_found_snapshot_index : int
     interceptor_timeout : int
     is_auth : bool
     log_file : str
@@ -167,6 +139,7 @@ class CoverityAPI(object):
             cls.instance.interceptor_timeout = configs["coverityAPI"]["interceptorTimeoutSeconds"]
 
             cls.instance.is_auth = False
+            cls.cached_found_snapshot_index = None
 
         return cls.instance
     
@@ -289,16 +262,21 @@ class CoverityAPI(object):
             logger.debug("Initial polling OK. Finished finding snapshot view id and project view id")
             return True
         
-        if self.cached_recent_snapshot['snapshotDescription'] != compilation_tag:
-            logger.warning(f"Recent snapshot has compilation tag \"{self.cached_recent_snapshot['snapshotDescription']}\", expected \"{compilation_tag}\". Needs retrying.")
+        snap_found = False
+        for i in range(len(self.cached_recent_snapshots)):
+            if self.cached_recent_snapshots[i]['snapshotDescription'] == compilation_tag:
+                snap_found = True
+                logger.debug(f"Found uploaded snapshot with tag {compilation_tag} at index {i}")
+                self.cached_found_snapshot_index = i
+                break
+
+        if not snap_found:
+            logger.warning(f"Recent snapshot has compilation tag \"{self.cached_recent_snapshots['snapshotDescription']}\", expected \"{compilation_tag}\". Needs retrying.")
 
             # the build has not been analyzed yet, we need to wait before retrying to get the most recent snpashot containing the build
             time.sleep(self.snapshot_polling_seconds)
             return False
-        else:
-            logger.warning(f"Found uploaded snapshot with tag {compilation_tag}")
         
-
         return True
     
     def init_snapshot_and_project_views(self):
@@ -444,10 +422,10 @@ class CoverityAPI(object):
         browser.get(self.snapshots_url)
         
         try:
-            recent_snapshot_cell = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/cim-root/cim-shell/div/cim-project-view/div[1]/div[1]/div[1]/cim-data-table/angular-slickgrid/div/div/div[4]/div[3]/div/div[1]/div[2]')))
+            recent_snapshot_cell = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, f'/html/body/cim-root/cim-shell/div/cim-project-view/div[1]/div[1]/div[1]/cim-data-table/angular-slickgrid/div/div/div[4]/div[3]/div/div[{self.cached_found_snapshot_index + 1}]/div[2]')))
             double_click_snapshot_cell = ActionChains(browser).double_click(recent_snapshot_cell).perform()
         except TimeoutException as te:                                                                                    
-            logger.critical("Cannot find most recent snapshot cell when fetching defects")
+            logger.critical("Cannot find snapshot cell when fetching defects")
             raise te
         time.sleep(2)
 
@@ -481,7 +459,7 @@ class CoverityAPI(object):
 
         logger.debug("Clicked on column button. Next choose `Checker` column")
         time.sleep(2)
-
+        
         try:
             checker_column = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="select-checker"]')))
             browser.execute_script("arguments[0].scrollIntoView(true);", checker_column)
@@ -561,7 +539,7 @@ class CoverityAPI(object):
         logger.debug("Click on burger button, now go to the most recent snapshot (that was created when selected additional columns) arrow button with more options")
         time.sleep(2)
 
-        try:
+        try:                                                                                                                      
             recent_snapshot_more_options = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/cim-root/cim-shell/div/cim-sidebar/nav/div/div[2]/div/ul/li[1]/div/a/span')))
             recent_snapshot_more_options.click()
         except TimeoutException as te:
@@ -618,152 +596,6 @@ class CoverityAPI(object):
         except TimeoutException as te:
             raise te
 
-        return
-
-
-    def fetch_and_cache_recent_defects(self, compilation_tag : str) -> None:
-        
-        import time
-
-        if not self.is_auth:
-            logger.warn("Authenticating before fetching most recent defects...")
-            try:
-                self.auth()
-            except TimeoutException as te:
-                logger.critical("Authentication failed during fetching defects in the most recent snapshot")
-                raise te
-            
-        browser = self.browser
-
-        # try to intercept response body which contains all snapshot information
-        browser.switch_to.new_window('tab')
-
-        browser.get(self.snapshots_url)
-        
-        try:
-            recent_snapshot_cell = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/cim-root/cim-shell/div/cim-project-view/div[1]/div[1]/div[1]/cim-data-table/angular-slickgrid/div/div/div[4]/div[3]/div/div[1]/div[2]')))
-            double_click_snapshot_cell = ActionChains(browser).double_click(recent_snapshot_cell).perform()
-        except TimeoutException as te:
-            logger.critical("Cannot find most recent snapshot cell when fetching defects")
-            raise te
-        time.sleep(2)
-        # Add more columns
-        try:
-            edit_settings_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="current-selection-settings"]')))
-            edit_settings_button.click()
-        except TimeoutException as te:
-                logger.critical("Cannot find `edit settings` button")
-                raise te
-        
-        logger.debug("Opened settings in order to add additional columns in the snapshot view. Next click on `Save as Copy` button")
-        time.sleep(2)
-
-        try:
-            save_as_copy_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/simple-modal-holder/simple-modal-wrapper/div/cim-setting-modal/cim-base-modal/div/div[2]/div/div/form/ul/li[2]/label')))
-            save_as_copy_button.click()
-        except TimeoutException as te:
-            logger.critical("Cannot click on `Save as Copy` button")
-            raise te
-
-        logger.debug("Clicked on `Save as Copy` button. Next click no `Column` button")
-        time.sleep(2)
-
-        try:
-            column_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/simple-modal-holder/simple-modal-wrapper/div/cim-setting-modal/cim-base-modal/div/div[2]/div/div/fieldset/div/ul/li[2]/a/span')))
-            column_button.click()
-        except TimeoutException as te:
-            logger.critical("Cannot click on `Column` button")
-            raise te
-
-        logger.debug("Clicked on column button. Next choose `Checker` column")
-        time.sleep(2)
-
-        try:
-            checker_column = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="select-checker"]')))
-            browser.execute_script("arguments[0].scrollIntoView(true);", checker_column)
-            time.sleep(1)
-            checker_column.click()
-        except TimeoutException as te:
-            logger.critical("Cannot choose `Checker` column")
-            raise te
-
-        logger.debug("Clicked on `Checker` column. Next choose `CWE` column")
-        time.sleep(2)
-
-        try:
-            cwe_column = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="select-cwe"]')))
-            browser.execute_script("arguments[0].scrollIntoView(true);", cwe_column)
-            time.sleep(1)
-            cwe_column.click()
-        except TimeoutException as te:
-            logger.critical("Cannot choose `CWE` column")
-            raise te
-        
-        logger.debug("Clicked on `CWE` column. Next choose `Line Number` column")
-        time.sleep(2)
-
-        try:
-            line_number_column = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="select-lineNumber"]')))
-            browser.execute_script("arguments[0].scrollIntoView(true);", line_number_column)
-            time.sleep(1)
-            line_number_column.click()
-        except TimeoutException as te:
-            logger.critical("Cannot choose `Line Number` column")
-            raise te
-        
-        logger.debug("Clicked on `Line Number` column. Next choose `Score` column")
-        time.sleep(2)
-
-        try:
-            score_column = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="select-score"]')))
-            browser.execute_script("arguments[0].scrollIntoView(true);", score_column)
-            time.sleep(1)
-            score_column.click()
-        except TimeoutException as te:
-            logger.critical("Cannot choose `Score` column")
-            raise te
-
-        logger.debug("Clicked on `Score` column. Next enter name of the snapshot issue copy")
-        time.sleep(2)
-
-        try:
-            snapshot_copy_input = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="view-name"]')))
-            snapshot_copy_input.clear()
-            snapshot_copy_input.send_keys(compilation_tag)
-        except TimeoutException as te:
-            logger.critical("Cannot input the name of the snapshot issue copy")
-            raise te
-
-        logger.debug("Chose a name for the snapshot issue copy. Next click on `OK` button to finish and start intercepting the response body for defects")
-        time.sleep(2)
-
-        self.defects_state = DefectsStates.STARTED_BUT_NOT_FOUND
-        browser.response_interceptor = defects_response_interceptor
-
-        try:
-            ok_button = WebDriverWait(browser, self.scraper_wait).until(EC.element_to_be_clickable((By.XPATH, '/html/body/simple-modal-holder/simple-modal-wrapper/div/cim-setting-modal/cim-base-modal/div/div[3]/div/div/button[2]')))
-
-            logger.debug("Init defects response interceptor")
-            # only after initialising the interceptor, we can click on 'OK'
-            ok_button.click()
-        except TimeoutException as te:
-            logger.critical("Cannot click on `OK` button to finish adding more columns")
-            raise te
-
-        logger.debug("Finished adding new columns. Now try to intercept the response ")
-
-        with self.interceptor_condition:
-            while self.defects_state != DefectsStates.FOUND:
-                self.interceptor_condition.wait(self.interceptor_timeout)
-
-                # timeout inside the interceptor
-                if self.defects_state != DefectsStates.FOUND:
-                    logger.critical(f"Interceptor timeout. Expected {DefectsStates.FOUND.name}, got {self.defects_state}")
-                    raise InterceptorTimeout()
-                
-            # reinit the state of the defects interceptor maybe for further use
-            self.defects_state = DefectsStates.NOT_STARTED
-            
         return
     
     def intercept_build(self, compile_cmd : str, coverity_suite_path : str, app_path : str) -> bool:
