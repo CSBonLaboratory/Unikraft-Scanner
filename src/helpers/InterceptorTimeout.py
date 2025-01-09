@@ -1,2 +1,0 @@
-class InterceptorTimeout(TimeoutError):
-    pass
