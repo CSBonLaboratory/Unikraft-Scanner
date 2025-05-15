@@ -57,97 +57,6 @@ public class SymbolEngine
         return String.Join(" ", tokens);
     }
 
-    private int GetLinesOfCodeForBlock(int startCodeLineIdx, List<string> rawCodeContentLinesSlice, List<CompilationBlock> orderedBlocks){
-        /*
-            Must have the list of blocks in ascending order by block counter since this function will traverse the vector of blocks
-            like an interval tree in order to find the most precise block (smallest interval) the current line from the source file is placed into
-            A code line may also not be part of any compilation block (it is counted as a universal line)
-
-            We can omit building the tree, apply binary search on children instead of classic iteration (we gain log^2(N) instead of N in time complexity)
-        */
-        int ans = 0;
-
-        // iterate through every line in the slice of a source file inside the block
-        /// some lines may be code lines, whitespace lines or lines part of other compilation blocks representing children of the current one 
-        for(int currentLineIdx = startCodeLineIdx; currentLineIdx < startCodeLineIdx + rawCodeContentLinesSlice.Count - 1; currentLineIdx++){
-            
-            int currentBlockIdx = -1;
-            bool end = false;
-            
-            // traverse the tree of compilation blocks until you find the smalles interval [StartLineEnd + 1, EndLine - 1] that contains the line's index
-            while(!end){
-                
-                List<int> searchDomain;
-                // we start from the fake root 
-                // the line is obviously in the source file, meaning in the "fake" root compilation block that contains the whole source file
-                // use the cache that contains the children of this fake root
-                if(currentBlockIdx == -1){
-                    searchDomain = orphanBlocksCounterCache;
-                }
-                else{
-                    searchDomain = orderedBlocks[currentBlockIdx].Children;
-                }
-
-                // we are in a compilation block that is a leaf node, the solution is currentBlockIdx
-                if(searchDomain == null || searchDomain.Count == 0){
-                    end = true;
-                    break;
-                }
-                
-                // we do a binary search based on the intervals [StartLineEnd + 1, EndLine - 1] where the current code line might be
-
-                // if the current line index based on location in the source file is smaller than the lower bound of the middle child than go left
-
-                // if the current line index is inside the middle child interval than we go deeper in the tree
-
-                // if the current line index is higher than the upper bound we go right
-
-                // if we did not find any, then stop search, this means that the line is not part of any child of the current node
-                // so this line is part of the current node, we just need to check if it contains code or only whitespaces
-
-                int leftChildIdx = 0;
-                int rightChildIdx = searchDomain.Count;
-
-                bool foundBetterAns = false;
-
-                while(leftChildIdx < rightChildIdx){
-
-                    int midChildIdx = (leftChildIdx + rightChildIdx) / 2;
-                    
-                    CompilationBlock targetBlock = orderedBlocks[searchDomain[midChildIdx]];
-                    
-                    // found a block that encapsulates the line, we go deeper to see if we are more precise 
-                    if(targetBlock.StartLineEnd + 1 <= currentLineIdx && currentLineIdx <= targetBlock.EndLine - 1){
-                        currentBlockIdx = targetBlock.BlockCounter;
-                        foundBetterAns = true;
-                        break;
-                    }
-                    if(currentLineIdx < targetBlock.StartLineEnd + 1){
-                        rightChildIdx = midChildIdx;
-                    }
-                    else if(currentLineIdx > targetBlock.EndLine - 1){
-                        leftChildIdx = midChildIdx;
-                    }
-                }
-
-                // no more precise interval found in the children nodes, the solution is the current block
-                if(!foundBetterAns){
-                    end = true;
-                    break;
-                }
-            }
-        }
-        
-        // another reason to replace comments with whitespaces
-        // if we persist comments these will be considered lines of code which is false
-        foreach(string line in rawCodeContentLines){
-            if(line.Split().Where(e => e != "").ToArray().Length != 0)
-                ans++;
-        }
-
-        return ans;
-    }
-
     private static void ParsePluginBlock(ref int startLine, ref int startLineEnd, ref int endLine, ConditionalBlockTypes directiveType, string[] blockInfoLines){
         
         startLine = int.Parse(blockInfoLines[0].Split()[2]);
@@ -232,8 +141,53 @@ public class SymbolEngine
         return pluginResults.Split("\n\n").Where(e => e != "").ToArray();
     }
 
+    private void CountLinesOfCodeInSourceFile(List<string> sourceLines, List<CompilationBlock> foundBlocks){
 
-    public (List<CompilationBlock>, CBTree) FindCompilationBlocksAndLines(string sourceFileAbsPath, InterceptorOptions opts){
+        bool FastFindCodeLine(string line){
+            bool foundC = false;
+            foreach(Char c in line)
+                if(Char.IsWhiteSpace(c) == false){
+                    foundC = true;
+                    break;
+                }
+
+            return foundC;
+                    
+            
+        }
+
+        foreach(CompilationBlock currentBlock in foundBlocks){
+            if(currentBlock.Children == null || currentBlock.Children.Count == 0){
+                
+                for(int i = currentBlock.StartLineEnd + 1; i < currentBlock.EndLine; i++){
+                    if(FastFindCodeLine(sourceLines[i]))
+                        currentBlock.Lines++;
+                }
+            }
+            else{
+
+                int startMeasure = currentBlock.StartLineEnd + 1;
+
+                foreach(int childIdx in currentBlock.Children){
+                    CompilationBlock childBlock = foundBlocks[childIdx];
+                    for(int i = startMeasure; i < childBlock.StartLine; i++){
+                        if(FastFindCodeLine(sourceLines[i]))
+                            currentBlock.Lines++;
+                    }
+
+                    startMeasure = childBlock.EndLine + 1;
+                }
+
+                for(int i = startMeasure; i < currentBlock.EndLine; i++){
+                    if(FastFindCodeLine(sourceLines[i]))
+                        currentBlock.Lines++;
+                }
+
+            }
+        }
+    }
+
+    public List<CompilationBlock> FindCompilationBlocksAndLines(string sourceFileAbsPath, InterceptorOptions opts){
         
         List<CompilationBlock> ans = new();
 
@@ -243,6 +197,7 @@ public class SymbolEngine
         string[] rawBlocks = ExecutePlugin(sourceFileAbsPath, opts);
 
         List<string> sourceLines = File.ReadAllText(sourceFileAbsPath).Split("\n").ToList();
+
         // we just add a blank line so that line indexes start from 1 just as the plugin info when it comes to line numbers
         sourceLines.Insert(0, "");
 
@@ -269,7 +224,6 @@ public class SymbolEngine
                 CompilationBlock endingBlock = openedBlocks.Pop();
 
                 endingBlock.EndLine = endLine;
-                endingBlock.Lines = GetLinesOfCodeForBlock(sourceLines.Slice(endingBlock.StartLineEnd + 1, endingBlock.EndLine - endingBlock.StartLineEnd - 1));
 
                 ans.Add(endingBlock);
             }
@@ -313,7 +267,6 @@ public class SymbolEngine
                 // finalize processing previous branch block (a previous elif, if, ifndef, ifdef)
                 CompilationBlock siblingBlock = openedBlocks.Pop();
                 siblingBlock.EndLine = startLine;
-                siblingBlock.Lines = GetLinesOfCodeForBlock(sourceLines.Slice(siblingBlock.StartLineEnd + 1, siblingBlock.EndLine - siblingBlock.StartLineEnd - 1));
                 ans.Add(siblingBlock);
 
                 // see if current block has a parent and then link each other
@@ -350,7 +303,9 @@ public class SymbolEngine
             
         }
 
-        return (ans, BuildCBTree(ans));
+        CountLinesOfCodeInSourceFile(sourceLines, ans);
+
+        return ans;
     }
     public static void Main(string[] args){
 
