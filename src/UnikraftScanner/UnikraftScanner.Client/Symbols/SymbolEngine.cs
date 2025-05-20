@@ -27,7 +27,7 @@ public class SymbolEngine
         return instance;
     }
     
-    private string RemoveComments(string AbsSourcePath){
+    private string RemoveComments(string sourceFileRawContent){
         
         // C-comment remover got from https://gist.github.com/ChunMinChang/88bfa5842396c1fbbc5b
         string ReplaceWithWhiteSpace(Match comment){
@@ -40,21 +40,19 @@ public class SymbolEngine
             return oldComment;
         }
 
-        string rawContent = File.ReadAllText(AbsSourcePath);
-
         Regex commentRegex = new Regex(@"//.*?$|/\*.*?\*/|\'(?:\\.|[^\\\'])*\'|""(?:\\.|[^\\""])*""", RegexOptions.Singleline | RegexOptions.Multiline);
 
-        return commentRegex.Replace(rawContent, new MatchEvaluator(ReplaceWithWhiteSpace));
+        return commentRegex.Replace(sourceFileRawContent, new MatchEvaluator(ReplaceWithWhiteSpace));
     }
 
     private static string GetCondition(List<string> rawConditionLines){
-        
-        List<string> tokens = new();
+
+        string tokens = "";
 
         foreach(string line in rawConditionLines){
-            tokens = tokens.Concat(line.Replace("\\", "").Split().Where(e => e != "").ToList()).ToList();
+            tokens += line.Replace("\\", "");
         }
-        return String.Join(" ", tokens);
+        return Regex.Replace(Regex.Replace(tokens, @"\s{2,}", " "), @"#\s+", "#");
     }
 
     private static void ParsePluginBlock(ref int startLine, ref int startLineEnd, ref int endLine, ConditionalBlockTypes directiveType, string[] blockInfoLines){
@@ -156,32 +154,40 @@ public class SymbolEngine
             
         }
 
-        foreach(CompilationBlock currentBlock in foundBlocks){
-            if(currentBlock.Children == null || currentBlock.Children.Count == 0){
-                
-                for(int i = currentBlock.StartLineEnd + 1; i < currentBlock.EndLine; i++){
-                    if(FastFindCodeLine(sourceLines[i]))
+        foreach (CompilationBlock currentBlock in foundBlocks)
+        {
+            if (currentBlock.Children == null || currentBlock.Children.Count == 0)
+            {
+
+                for (int i = currentBlock.StartLineEnd + 1; i < currentBlock.EndLine; i++)
+                {
+                    if (FastFindCodeLine(sourceLines[i]))
                         currentBlock.Lines++;
                 }
             }
-            else{
+            else
+            {
 
                 int startMeasure = currentBlock.StartLineEnd + 1;
 
-                foreach(int childIdx in currentBlock.Children){
+                foreach (int childIdx in currentBlock.Children)
+                {
                     CompilationBlock childBlock = foundBlocks[childIdx];
-                    for(int i = startMeasure; i < childBlock.StartLine; i++){
-                        if(FastFindCodeLine(sourceLines[i]))
+                    for (int i = startMeasure; i < childBlock.StartLine; i++)
+                    {
+                        if (FastFindCodeLine(sourceLines[i]))
                             currentBlock.Lines++;
                     }
 
                     startMeasure = childBlock.EndLine + 1;
                 }
 
-                for(int i = startMeasure; i < currentBlock.EndLine; i++){
-                    if(FastFindCodeLine(sourceLines[i]))
+                for (int i = startMeasure; i < currentBlock.EndLine; i++)
+                {
+                    if (FastFindCodeLine(sourceLines[i]))
                         currentBlock.Lines++;
                 }
+
 
             }
         }
@@ -196,7 +202,7 @@ public class SymbolEngine
 
         string[] rawBlocks = ExecutePlugin(sourceFileAbsPath, opts);
 
-        List<string> sourceLines = File.ReadAllText(sourceFileAbsPath).Split("\n").ToList();
+        List<string> sourceLines = RemoveComments(File.ReadAllText(sourceFileAbsPath)).Split("\n").ToList();
 
         // we just add a blank line so that line indexes start from 1 just as the plugin info when it comes to line numbers
         sourceLines.Insert(0, "");
@@ -216,8 +222,6 @@ public class SymbolEngine
             parentCounter = -1;
 
             ParsePluginBlock(ref startLine, ref startLineEnd, ref endLine, directiveType, blockInfoLines);
-
-            Console.WriteLine($"{startLine} {startLineEnd} {endLine}");
 
             if(directiveType == ConditionalBlockTypes.ENDIF){
                 
@@ -244,6 +248,7 @@ public class SymbolEngine
                 }
                     
                 CompilationBlock currentBlock = new CompilationBlock(
+                    type: directiveType,
                     condition: GetCondition(sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
                     startLine: startLine,
                     blockCounter: blockCounter,
@@ -282,13 +287,14 @@ public class SymbolEngine
                 }
 
                 CompilationBlock currentBlock = new CompilationBlock(
-                        GetCondition(sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
-                        startLine: startLine,
-                        blockCounter: blockCounter,
-                        startLineEnd: startLineEnd,
-                        // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
-                        endLine: -1,
-                        parentCounter: parentCounter
+                    type: directiveType,
+                    GetCondition(sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
+                    startLine: startLine,
+                    blockCounter: blockCounter,
+                    startLineEnd: startLineEnd,
+                    // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
+                    endLine: -1,
+                    parentCounter: parentCounter
                 );
                 openedBlocks.Push(currentBlock);
 
@@ -302,6 +308,9 @@ public class SymbolEngine
             }
             
         }
+
+        // very important to sort ascending based on discovery order (blockCounter) which means also based on the inteval [StartLine/StartLineEnd, EndLine]
+        ans.Sort((x, y) => x.BlockCounter.CompareTo(y.BlockCounter));
 
         CountLinesOfCodeInSourceFile(sourceLines, ans);
 
