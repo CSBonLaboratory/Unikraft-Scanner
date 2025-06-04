@@ -46,47 +46,79 @@ public class SymbolEngine
     }
 
     private static string GetCondition(List<string> rawConditionLines){
+        /*
+        Symbol conditions of the preprocessor directives must:
+        
+        - be put on a single line
+        - replace multiple whitespaces with only 1 whitespace
+        - replace "#     ....." with "#....."
 
+        */
         string tokens = "";
 
         foreach(string line in rawConditionLines){
             tokens += line.Replace("\\", "");
         }
-        return Regex.Replace(Regex.Replace(tokens, @"\s{2,}", " "), @"#\s+", "#");
+        return
+            Regex.Replace(
+                Regex.Replace(tokens, @"\s{2,}", " "),
+            @"#\s+",
+            "#"
+            );
     }
 
-    private static void ParsePluginBlock(ref int startLine, ref int startLineEnd, ref int endLine, ConditionalBlockTypes directiveType, string[] blockInfoLines){
+    private static void ParsePluginBlock(ref int startLine, ref int startLineEnd, ref int endLine, ConditionalBlockTypes directiveType, string[] blockInfoLines, List<string> sourceLines){
         
         startLine = int.Parse(blockInfoLines[0].Split()[2]);
 
         // very important to also compare the space since without it IFNDEF, IFDEF and ELIF can be also accepted on this branch
         // format is IF <start line> <start column>
-        if(directiveType == ConditionalBlockTypes.IF){
-            
+        if (directiveType == ConditionalBlockTypes.IF)
+        {
+
             startLineEnd = int.Parse(blockInfoLines[2].Split()[1]);
 
             // we are not in the state to find the end line of the block, it might be an elif, else or endif
             endLine = -1;
         }
-        else if(new[]{ConditionalBlockTypes.IFDEF, ConditionalBlockTypes.IFNDEF, ConditionalBlockTypes.ELSE}.Contains(directiveType)){
-            
+        else if (new[] { ConditionalBlockTypes.IFDEF, ConditionalBlockTypes.IFNDEF }.Contains(directiveType))
+        {
+
             startLineEnd = startLine;
 
-            // same as IF
+            // same as in the IF
             endLine = -1;
         }
-        else if(directiveType == ConditionalBlockTypes.ELIF){
+
+        else if (directiveType == ConditionalBlockTypes.ELSE)
+        {
+            // #else can be multiline but the compiler plugin does not show the begin and end lines, so we need to iterate through the lines and find the end
+            // if #else was forbidden from being split in multiline then it whould be treated the same as IFDEF and IFNDEF like in the previous branch
+            if (sourceLines[startLine].Contains('\\'))
+            {
+                int i;
+                for (i = startLine + 1; sourceLines[i].Contains('\\'); i++) ;
+
+                startLineEnd = i - 1;
+            }
+            else
+                startLineEnd = startLine;
+        }
+        else if (directiveType == ConditionalBlockTypes.ELIF)
+        {
 
             startLineEnd = int.Parse(blockInfoLines[3].Split()[1]);
 
         }
-        else if(directiveType == ConditionalBlockTypes.ENDIF){
+        else if (directiveType == ConditionalBlockTypes.ENDIF)
+        {
             startLine = -1;
             startLineEnd = -1;
             endLine = int.Parse(blockInfoLines[0].Split()[2]);
         }
-        else{
-            throw new Exception("UNKNOWN DIRECTIVE TYPE");
+        else
+        {
+            throw new Exception($" UNKNOWN DIRECTIVE TYPE: {directiveType}");
         }
 
     }
@@ -99,7 +131,7 @@ public class SymbolEngine
         startInfo.Arguments = $" -I/usr/include {sourceFileAbsPath}";
 
         // // compilation flags used to ignore #include, #define, #line directives that may interfere with the exact locations of the conditional blocks
-        startInfo.Arguments += " -Wextra -E -fdirectives-only -dD -P";
+        startInfo.Arguments += " -Wall -Wextra -E -fdirectives-only -dD -P";
 
         // // inform clang that it needs to execute our plugin
         // // https://clang.llvm.org/docs/ClangPlugins.html
@@ -139,7 +171,7 @@ public class SymbolEngine
         return pluginResults.Split("\n\n").Where(e => e != "").ToArray();
     }
 
-    private void CountLinesOfCodeInSourceFile(List<string> sourceLines, List<CompilationBlock> foundBlocks){
+    private void CountLinesOfCodeInSourceFile(List<string> sourceLines, List<CompilationBlock> foundBlocks, ref int universalLinesOfCode){
 
         bool FastFindCodeLine(string line){
             bool foundC = false;
@@ -150,12 +182,27 @@ public class SymbolEngine
                 }
 
             return foundC;
-                    
-            
         }
 
+        // get lines of code outside any block from beginning of the document until the first block
+        for (int i = 1; i < foundBlocks[orphanBlocksCounterCache[0]].StartLine; i++)
+        {
+            if (FastFindCodeLine(sourceLines[i]))
+                universalLinesOfCode++;
+        }
+
+        // get lines of code outside any block from the last block until the end of document
+        for (int i = foundBlocks[orphanBlocksCounterCache.Last()].EndLine; i < sourceLines.Count; i++)
+        {
+            if (FastFindCodeLine(sourceLines[i]))
+                universalLinesOfCode++;
+        }
+
+        // now count lines of code for all blocks
+        // a line of code is counted only once in the most specific/precise/small block that contains it
         foreach (CompilationBlock currentBlock in foundBlocks)
         {
+            // if block does not have any embeded blocks just iterate through start-end
             if (currentBlock.Children == null || currentBlock.Children.Count == 0)
             {
 
@@ -167,9 +214,11 @@ public class SymbolEngine
             }
             else
             {
-
+                
+                // the same as counting universal lines but now the document is considered the current block
                 int startMeasure = currentBlock.StartLineEnd + 1;
 
+                // count lines before first child, between children and after last child
                 foreach (int childIdx in currentBlock.Children)
                 {
                     CompilationBlock childBlock = foundBlocks[childIdx];
@@ -187,8 +236,6 @@ public class SymbolEngine
                     if (FastFindCodeLine(sourceLines[i]))
                         currentBlock.Lines++;
                 }
-
-
             }
         }
     }
@@ -221,32 +268,36 @@ public class SymbolEngine
             // reset parent counter
             parentCounter = -1;
 
-            ParsePluginBlock(ref startLine, ref startLineEnd, ref endLine, directiveType, blockInfoLines);
+            ParsePluginBlock(ref startLine, ref startLineEnd, ref endLine, directiveType, blockInfoLines, sourceLines);
+            
+            
+            if (directiveType == ConditionalBlockTypes.ENDIF)
+            {
 
-            if(directiveType == ConditionalBlockTypes.ENDIF){
-                
                 CompilationBlock endingBlock = openedBlocks.Pop();
 
                 endingBlock.EndLine = endLine;
 
                 ans.Add(endingBlock);
             }
-            else if(new[]{ConditionalBlockTypes.IF, ConditionalBlockTypes.IFDEF, ConditionalBlockTypes.IFNDEF}.Contains(directiveType)){
-                    
+            else if (new[] { ConditionalBlockTypes.IF, ConditionalBlockTypes.IFDEF, ConditionalBlockTypes.IFNDEF }.Contains(directiveType))
+            {
+
                 // see if current block has a parent and then link each other
-                if(openedBlocks.Count > 0){
+                if (openedBlocks.Count > 0)
+                {
                     CompilationBlock parentBlock = openedBlocks.Peek();
 
-                    if(parentBlock.Children == null)
-                        parentBlock.Children = new List<int>(){blockCounter};
+                    if (parentBlock.Children == null)
+                        parentBlock.Children = new List<int>() { blockCounter };
                     else
                         parentBlock.Children.Add(blockCounter);
 
 
                     parentCounter = parentBlock.BlockCounter;
-                    
+
                 }
-                    
+
                 CompilationBlock currentBlock = new CompilationBlock(
                     type: directiveType,
                     condition: GetCondition(sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
@@ -256,18 +307,20 @@ public class SymbolEngine
                     // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
                     endLine: -1,
                     parentCounter: parentCounter);
-                  
+
                 openedBlocks.Push(currentBlock);
 
                 // this block would be a child of a root "fake" compilation block that contains the entire source file
-                if(parentCounter == -1){
+                if (parentCounter == -1)
+                {
                     orphanBlocksCounterCache.Add(blockCounter);
                 }
 
                 blockCounter++;
-                    
+
             }
-            else if(new[]{ConditionalBlockTypes.ELIF, ConditionalBlockTypes.ELSE}.Contains(directiveType)){
+            else if (new[] { ConditionalBlockTypes.ELIF, ConditionalBlockTypes.ELSE }.Contains(directiveType))
+            {
 
                 // finalize processing previous branch block (a previous elif, if, ifndef, ifdef)
                 CompilationBlock siblingBlock = openedBlocks.Pop();
@@ -275,11 +328,12 @@ public class SymbolEngine
                 ans.Add(siblingBlock);
 
                 // see if current block has a parent and then link each other
-                if(openedBlocks.Count > 0){
+                if (openedBlocks.Count > 0)
+                {
                     CompilationBlock parentBlock = openedBlocks.Peek();
 
-                    if(parentBlock.Children == null)
-                        parentBlock.Children = new List<int>(){blockCounter};
+                    if (parentBlock.Children == null)
+                        parentBlock.Children = new List<int>() { blockCounter };
                     else
                         parentBlock.Children.Add(blockCounter);
 
@@ -299,59 +353,28 @@ public class SymbolEngine
                 openedBlocks.Push(currentBlock);
 
                 // this block would be a child of a root "fake" compilation block that contains the entire source file
-                if(parentCounter == -1){
+                if (parentCounter == -1)
+                {
                     orphanBlocksCounterCache.Add(blockCounter);
                 }
 
                 blockCounter++;
-            
+
             }
             
         }
-
+        
         // very important to sort ascending based on discovery order (blockCounter) which means also based on the inteval [StartLine/StartLineEnd, EndLine]
         ans.Sort((x, y) => x.BlockCounter.CompareTo(y.BlockCounter));
-
-        CountLinesOfCodeInSourceFile(sourceLines, ans);
+        int universalLinesOfCode = 0;
+        CountLinesOfCodeInSourceFile(sourceLines, ans, ref universalLinesOfCode);
 
         return ans;
     }
-    public static void Main(string[] args){
 
-        string a = "                 ";
-		
-		//string[] b = "aaa   bbb c d ee  ".Split();
-		//a += b;
-		string[] x = a.Split(a).Where(e => e != "").ToArray();
-		foreach(string y in x)
-			Console.WriteLine(y);
-		
-		Console.WriteLine(x.Length);
-        
-        // string noCommentContent = this.RemoveComments(AbsSourcePath);
-        // File.WriteAllText("/home/karakitay/Desktop/Unikraft-Scanner/src/UnikraftScanner/UnikraftScanner.Tests/Symbols/inputs/test6-out.c", noCommentContent);
-        // string[] lines = this.RemoveComments(AbsSourcePath).Split("\n");
-
-        // NextParser = UnknownParser.GetInstance();
-        
-        // UnparsedLines = new(lines.Length);
-        // foreach(string l in lines)
-        //     UnparsedLines.Enqueue(l);
-        
-        // // the unknown parser does nothing so we must firstly choose the right parser
-        // NextParser = NextParser.DecideLookahead();
-
-        // while(NextParser != EOFParser.GetInstance()){
-        //     LineParser currentParser = NextParser;
-
-        //     currentParser.ParseLine();
-            
-        //     NextParser = currentParser.DecideLookahead();
-
-        // }
-
-        // return ParsedBlocks;
-
+    public static void Main(string[] args)
+    {
+    
     }
 
     
