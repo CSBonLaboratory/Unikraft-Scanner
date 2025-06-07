@@ -49,6 +49,7 @@ public class SymbolEngine
         /*
         Symbol conditions of the preprocessor directives must:
         
+        - new line character (\) followed by ending whitespaces must eliminate them (this is also a warning raised by compiler)
         - be put on a single line
         - replace multiple whitespaces with only 1 whitespace
         - replace "#     ....." with "#....."
@@ -56,18 +57,32 @@ public class SymbolEngine
         */
         string tokens = "";
 
-        foreach(string line in rawConditionLines){
-            tokens += line.Replace("\\", "");
+
+        foreach (string line in rawConditionLines)
+        {
+            int possibleBackSlashEndPos = line.LastIndexOf("\\");
+
+            if (possibleBackSlashEndPos == -1)
+                tokens += line.Replace("\\", "");
+            else
+                tokens += line.Substring(0, possibleBackSlashEndPos + 1).Replace("\\", "");
         }
-        return
+
+        string ans
+        = Regex.Replace(
             Regex.Replace(
-                Regex.Replace(tokens, @"\s{2,}", " "),
+                tokens,
+                @"\s{2,}",
+                " "
+            ),
             @"#\s+",
             "#"
             );
+        return ans;
+            
     }
 
-    private static void ParsePluginBlock(ref int startLine, ref int startLineEnd, ref int endLine, ConditionalBlockTypes directiveType, string[] blockInfoLines, List<string> sourceLines){
+    private static void ParseResultsPluginBlock(ref int startLine, ref int startLineEnd, ref int endLine, ref int fakeEndLine, ConditionalBlockTypes directiveType, string[] blockInfoLines, List<string> sourceLines){
         
         startLine = int.Parse(blockInfoLines[0].Split()[2]);
 
@@ -80,41 +95,67 @@ public class SymbolEngine
 
             // we are not in the state to find the end line of the block, it might be an elif, else or endif
             endLine = -1;
+
+            // only used for multine #endif
+            fakeEndLine = -1;
         }
         else if (new[] { ConditionalBlockTypes.IFDEF, ConditionalBlockTypes.IFNDEF }.Contains(directiveType))
         {
 
             startLineEnd = startLine;
 
-            // same as in the IF
+            // we are not in the state to find the end line of the block, it might be an elif, else or endif
             endLine = -1;
+
+            // only used for multine #endif
+            fakeEndLine = -1;
         }
 
         else if (directiveType == ConditionalBlockTypes.ELSE)
         {
-            // #else can be multiline but the compiler plugin does not show the begin and end lines, so we need to iterate through the lines and find the end
+            // #else can be split multiline but the compiler plugin does not show the begin and end lines, so we need to iterate through the lines and find the end
             // if #else was forbidden from being split in multiline then it whould be treated the same as IFDEF and IFNDEF like in the previous branch
             if (sourceLines[startLine].Contains('\\'))
             {
                 int i;
                 for (i = startLine + 1; sourceLines[i].Contains('\\'); i++) ;
 
-                startLineEnd = i - 1;
+                startLineEnd = i;
             }
             else
                 startLineEnd = startLine;
+
+            // we are not in the state to find the end line of the block, it might be an elif, else or endif
+            endLine = -1;
+
+            // only used for multine #endif
+            fakeEndLine = -1;
         }
         else if (directiveType == ConditionalBlockTypes.ELIF)
         {
 
             startLineEnd = int.Parse(blockInfoLines[3].Split()[1]);
 
+            // we are not in the state to find the end line of the block, it might be an elif, else or endif
+            endLine = -1;
+
+            // only used for multine #endif
+            fakeEndLine = -1;
+
         }
         else if (directiveType == ConditionalBlockTypes.ENDIF)
         {
+            // start line and startLineEnd are populated by the first incomplete block from the stack that ends at this endif
             startLine = -1;
             startLineEnd = -1;
-            endLine = int.Parse(blockInfoLines[0].Split()[2]);
+
+            
+            fakeEndLine = int.Parse(blockInfoLines[0].Split()[2]);
+
+            int i;
+            for (i = fakeEndLine; sourceLines[i].Contains('\\'); i++) ;
+
+            endLine = i;
         }
         else
         {
@@ -185,18 +226,18 @@ public class SymbolEngine
         }
 
         // get lines of code outside any block from beginning of the document until the first block
-        for (int i = 1; i < foundBlocks[orphanBlocksCounterCache[0]].StartLine; i++)
-        {
-            if (FastFindCodeLine(sourceLines[i]))
-                universalLinesOfCode++;
-        }
+        // for (int i = 1; i < foundBlocks[orphanBlocksCounterCache[0]].StartLine; i++)
+        // {
+        //     if (FastFindCodeLine(sourceLines[i]))
+        //         universalLinesOfCode++;
+        // }
 
         // get lines of code outside any block from the last block until the end of document
-        for (int i = foundBlocks[orphanBlocksCounterCache.Last()].EndLine; i < sourceLines.Count; i++)
-        {
-            if (FastFindCodeLine(sourceLines[i]))
-                universalLinesOfCode++;
-        }
+        // for (int i = foundBlocks[orphanBlocksCounterCache.Last()].EndLine; i < sourceLines.Count; i++)
+        // {
+        //     if (FastFindCodeLine(sourceLines[i]))
+        //         universalLinesOfCode++;
+        // }
 
         // now count lines of code for all blocks
         // a line of code is counted only once in the most specific/precise/small block that contains it
@@ -206,7 +247,7 @@ public class SymbolEngine
             if (currentBlock.Children == null || currentBlock.Children.Count == 0)
             {
 
-                for (int i = currentBlock.StartLineEnd + 1; i < currentBlock.EndLine; i++)
+                for (int i = currentBlock.StartLineEnd + 1; i < currentBlock.FakeEndLine; i++)
                 {
                     if (FastFindCodeLine(sourceLines[i]))
                         currentBlock.Lines++;
@@ -231,7 +272,7 @@ public class SymbolEngine
                     startMeasure = childBlock.EndLine + 1;
                 }
 
-                for (int i = startMeasure; i < currentBlock.EndLine; i++)
+                for (int i = startMeasure; i < currentBlock.FakeEndLine; i++)
                 {
                     if (FastFindCodeLine(sourceLines[i]))
                         currentBlock.Lines++;
@@ -256,7 +297,7 @@ public class SymbolEngine
 
         Stack<CompilationBlock> openedBlocks = new();
 
-        int startLine = -1, startLineEnd = -1, endLine = -1, parentCounter = -1, blockCounter = 0;
+        int startLine = -1, startLineEnd = -1, endLine = -1, parentCounter = -1, blockCounter = 0, fakeEndLine = -1;
 
         foreach(string block in rawBlocks){
             
@@ -268,14 +309,14 @@ public class SymbolEngine
             // reset parent counter
             parentCounter = -1;
 
-            ParsePluginBlock(ref startLine, ref startLineEnd, ref endLine, directiveType, blockInfoLines, sourceLines);
-            
+            ParseResultsPluginBlock(ref startLine, ref startLineEnd, ref endLine, ref fakeEndLine, directiveType, blockInfoLines, sourceLines);
             
             if (directiveType == ConditionalBlockTypes.ENDIF)
             {
 
                 CompilationBlock endingBlock = openedBlocks.Pop();
 
+                endingBlock.FakeEndLine = fakeEndLine;
                 endingBlock.EndLine = endLine;
 
                 ans.Add(endingBlock);
@@ -305,6 +346,7 @@ public class SymbolEngine
                     blockCounter: blockCounter,
                     startLineEnd: startLineEnd,
                     // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
+                    fakeEndLine: -1,
                     endLine: -1,
                     parentCounter: parentCounter);
 
@@ -324,6 +366,8 @@ public class SymbolEngine
 
                 // finalize processing previous branch block (a previous elif, if, ifndef, ifdef)
                 CompilationBlock siblingBlock = openedBlocks.Pop();
+                // fake end line only used when closing a block with an #endif
+                siblingBlock.FakeEndLine = startLine;
                 siblingBlock.EndLine = startLine;
                 ans.Add(siblingBlock);
 
@@ -347,6 +391,7 @@ public class SymbolEngine
                     blockCounter: blockCounter,
                     startLineEnd: startLineEnd,
                     // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
+                    fakeEndLine: -1,
                     endLine: -1,
                     parentCounter: parentCounter
                 );
