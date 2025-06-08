@@ -6,8 +6,9 @@ using System.Diagnostics;
 
 public class SymbolEngine
 {
+    public record EngineResult(List<CompilationBlock> Blocks, int UniversalLinesOfCode, List<int>debugUniveralLinesOfCodeIdxs);
     private static SymbolEngine? instance = null;
-    private SymbolEngine(){}
+    private SymbolEngine() { }
 
     // cache used in GetLinesOfCodeForBlock() to traverse blocks that have parent counter -1
     // an entry is added in this cache anytime a compilation block in created 
@@ -19,22 +20,26 @@ public class SymbolEngine
     // you can compare them to root nodes of a forest data structure
     private List<int> orphanBlocksCounterCache;
 
-    public static SymbolEngine GetInstance(){
-        if(instance == null){
+    public static SymbolEngine GetInstance()
+    {
+        if (instance == null)
+        {
             instance = new SymbolEngine();
         }
-        
+
         return instance;
     }
-    
-    private string RemoveComments(string sourceFileRawContent){
-        
+
+    private string RemoveComments(string sourceFileRawContent)
+    {
+
         // C-comment remover got from https://gist.github.com/ChunMinChang/88bfa5842396c1fbbc5b
-        string ReplaceWithWhiteSpace(Match comment){
+        string ReplaceWithWhiteSpace(Match comment)
+        {
 
             string oldComment = comment.Value;
 
-            if(oldComment.StartsWith('/'))
+            if (oldComment.StartsWith('/'))
                 return new string('\n', oldComment.Split('\n').Length - 1);
 
             return oldComment;
@@ -45,7 +50,8 @@ public class SymbolEngine
         return commentRegex.Replace(sourceFileRawContent, new MatchEvaluator(ReplaceWithWhiteSpace));
     }
 
-    private static string GetCondition(List<string> rawConditionLines){
+    private static string GetCondition(List<string> rawConditionLines)
+    {
         /*
         Symbol conditions of the preprocessor directives must:
         
@@ -79,11 +85,12 @@ public class SymbolEngine
             "#"
             );
         return ans;
-            
+
     }
 
-    private static void ParseResultsPluginBlock(ref int startLine, ref int startLineEnd, ref int endLine, ref int fakeEndLine, ConditionalBlockTypes directiveType, string[] blockInfoLines, List<string> sourceLines){
-        
+    private static void ParseResultsPluginBlock(ref int startLine, ref int startLineEnd, ref int endLine, ref int fakeEndLine, ConditionalBlockTypes directiveType, string[] blockInfoLines, List<string> sourceLines)
+    {
+
         startLine = int.Parse(blockInfoLines[0].Split()[2]);
 
         // very important to also compare the space since without it IFNDEF, IFDEF and ELIF can be also accepted on this branch
@@ -149,7 +156,7 @@ public class SymbolEngine
             startLine = -1;
             startLineEnd = -1;
 
-            
+
             fakeEndLine = int.Parse(blockInfoLines[0].Split()[2]);
 
             int i;
@@ -164,8 +171,9 @@ public class SymbolEngine
 
     }
 
-    private string[] ExecutePlugin(string sourceFileAbsPath, InterceptorOptions opts){
-        ProcessStartInfo startInfo  = new ProcessStartInfo(opts.CompilerPath);
+    private string[] ExecutePlugin(string sourceFileAbsPath, InterceptorOptions opts)
+    {
+        ProcessStartInfo startInfo = new ProcessStartInfo(opts.CompilerPath);
         //startInfo.FileName = opts.CompilerPath;
 
         // trigger plugin execution on tthe source file
@@ -191,7 +199,7 @@ public class SymbolEngine
         // // we will exclude them at the second stage when we need to find which ones are compiled (evaluated to true)
         startInfo.Arguments += $" -Xclang -plugin-arg-ConditionalBlockFinder";
         startInfo.Arguments += $" -Xclang TRUE";
-            
+
 
         startInfo.CreateNoWindow = true;
         startInfo.RedirectStandardError = true;
@@ -207,17 +215,33 @@ public class SymbolEngine
         generalInterceptor.WaitForExit();
 
         string pluginResults = File.ReadAllText(opts.InterceptionResultsFilePath);
-        
+
         // blocks are split by an empty line
         return pluginResults.Split("\n\n").Where(e => e != "").ToArray();
     }
 
-    private void CountLinesOfCodeInSourceFile(List<string> sourceLines, List<CompilationBlock> foundBlocks, ref int universalLinesOfCode){
+    private void CountLinesOfCodeInSourceFile(List<string> sourceLines, List<CompilationBlock> foundBlocks, ref int universalLinesOfCode, List<int> universalLineIdxs)
+    {
 
-        bool FastFindCodeLine(string line){
+        if (this.orphanBlocksCounterCache.Count == 0)
+        {
+            // dont forget ! we start from 1 because we also add a new line so that startLine/endLine should start at 1 like many IDEs
+            for (int i = 1; i < sourceLines.Count; i++)
+                if (FastFindCodeLine(sourceLines[i]))
+                {
+                    universalLinesOfCode++;
+
+                    universalLineIdxs.Add(i);
+                }
+            return;
+        }
+
+        bool FastFindCodeLine(string line)
+        {
             bool foundC = false;
-            foreach(Char c in line)
-                if(Char.IsWhiteSpace(c) == false){
+            foreach (Char c in line)
+                if (Char.IsWhiteSpace(c) == false)
+                {
                     foundC = true;
                     break;
                 }
@@ -225,19 +249,20 @@ public class SymbolEngine
             return foundC;
         }
 
-        // get lines of code outside any block from beginning of the document until the first block
-        // for (int i = 1; i < foundBlocks[orphanBlocksCounterCache[0]].StartLine; i++)
-        // {
-        //     if (FastFindCodeLine(sourceLines[i]))
-        //         universalLinesOfCode++;
-        // }
+        CompilationBlock fakeWholeSourceRootBlock = new CompilationBlock(
+            type: ConditionalBlockTypes.ROOT,
+            symbolCondition: "",
+            startLine: 1,
+            blockCounter: -1,
+            startLineEnd: 1,
+            fakeEndLine: sourceLines.Count - 1,
+            endLine: sourceLines.Count - 1,
+            parentCounter: -1,
+            lines: 0,
+            children: orphanBlocksCounterCache  // dont forget to use incremented elements since this fake block will also be added to the block list
+        );
 
-        // get lines of code outside any block from the last block until the end of document
-        // for (int i = foundBlocks[orphanBlocksCounterCache.Last()].EndLine; i < sourceLines.Count; i++)
-        // {
-        //     if (FastFindCodeLine(sourceLines[i]))
-        //         universalLinesOfCode++;
-        // }
+        foundBlocks.Insert(0, fakeWholeSourceRootBlock);
 
         // now count lines of code for all blocks
         // a line of code is counted only once in the most specific/precise/small block that contains it
@@ -246,7 +271,6 @@ public class SymbolEngine
             // if block does not have any embeded blocks just iterate through start-end
             if (currentBlock.Children == null || currentBlock.Children.Count == 0)
             {
-
                 for (int i = currentBlock.StartLineEnd + 1; i < currentBlock.FakeEndLine; i++)
                 {
                     if (FastFindCodeLine(sourceLines[i]))
@@ -255,35 +279,49 @@ public class SymbolEngine
             }
             else
             {
-                
-                // the same as counting universal lines but now the document is considered the current block
-                int startMeasure = currentBlock.StartLineEnd + 1;
+                // count lines if current block also has embeded children
+                // a line of code for the current block is either from start of the current block until the first child,
+                // or between children (so it is not contained in any child)
+                // or from last child until the end of the current block
 
-                // count lines before first child, between children and after last child
-                foreach (int childIdx in currentBlock.Children)
+                int firstChildStartLine = foundBlocks[currentBlock.Children[0] + 1].StartLine;
+
+                // lines before first child
+                for (int begin = currentBlock.StartLineEnd + 1; begin < firstChildStartLine; begin++)
+                    if (FastFindCodeLine(sourceLines[begin]))
+                        currentBlock.Lines++;
+
+
+                // lines between children
+                for (int i = 0; i < currentBlock.Children.Count - 1; i += 2)
                 {
-                    CompilationBlock childBlock = foundBlocks[childIdx];
-                    for (int i = startMeasure; i < childBlock.StartLine; i++)
+                    CompilationBlock childBlock = foundBlocks[currentBlock.Children[i] + 1]; // we increment since we added that fake root block that will be later removed
+                    CompilationBlock childNextBlock = foundBlocks[currentBlock.Children[i + 1] + 1];
+                    for (int j = childBlock.EndLine + 1; j < childNextBlock.StartLine; j++)
                     {
-                        if (FastFindCodeLine(sourceLines[i]))
+                        if (FastFindCodeLine(sourceLines[j]))
                             currentBlock.Lines++;
                     }
 
-                    startMeasure = childBlock.EndLine + 1;
                 }
 
-                for (int i = startMeasure; i < currentBlock.FakeEndLine; i++)
+                CompilationBlock lastChild = foundBlocks[currentBlock.Children.Last() + 1];
+                // lines after last child
+                for (int i = lastChild.EndLine + 1; i < currentBlock.FakeEndLine; i++)
                 {
                     if (FastFindCodeLine(sourceLines[i]))
                         currentBlock.Lines++;
                 }
             }
         }
+
+        universalLinesOfCode = foundBlocks[0].Lines;
     }
 
-    public List<CompilationBlock> FindCompilationBlocksAndLines(string sourceFileAbsPath, InterceptorOptions opts){
-        
-        List<CompilationBlock> ans = new();
+    public EngineResult FindCompilationBlocksAndLines(string sourceFileAbsPath, InterceptorOptions opts)
+    {
+
+        List<CompilationBlock> foundBlocks = new();
 
         // since this method is used only once on a source file we need to reset the cache
         orphanBlocksCounterCache = new List<int>();
@@ -299,18 +337,19 @@ public class SymbolEngine
 
         int startLine = -1, startLineEnd = -1, endLine = -1, parentCounter = -1, blockCounter = 0, fakeEndLine = -1;
 
-        foreach(string block in rawBlocks){
-            
+        foreach (string block in rawBlocks)
+        {
+
             // each info line in each block is on a particular line
             string[] blockInfoLines = block.Split("\n");
-            
+
             ConditionalBlockTypes directiveType = (ConditionalBlockTypes)int.Parse(blockInfoLines[0].Split()[0]);
-            
+
             // reset parent counter
             parentCounter = -1;
 
             ParseResultsPluginBlock(ref startLine, ref startLineEnd, ref endLine, ref fakeEndLine, directiveType, blockInfoLines, sourceLines);
-            
+
             if (directiveType == ConditionalBlockTypes.ENDIF)
             {
 
@@ -319,7 +358,7 @@ public class SymbolEngine
                 endingBlock.FakeEndLine = fakeEndLine;
                 endingBlock.EndLine = endLine;
 
-                ans.Add(endingBlock);
+                foundBlocks.Add(endingBlock);
             }
             else if (new[] { ConditionalBlockTypes.IF, ConditionalBlockTypes.IFDEF, ConditionalBlockTypes.IFNDEF }.Contains(directiveType))
             {
@@ -369,7 +408,7 @@ public class SymbolEngine
                 // fake end line only used when closing a block with an #endif
                 siblingBlock.FakeEndLine = startLine;
                 siblingBlock.EndLine = startLine;
-                ans.Add(siblingBlock);
+                foundBlocks.Add(siblingBlock);
 
                 // see if current block has a parent and then link each other
                 if (openedBlocks.Count > 0)
@@ -406,21 +445,22 @@ public class SymbolEngine
                 blockCounter++;
 
             }
-            
-        }
-        
-        // very important to sort ascending based on discovery order (blockCounter) which means also based on the inteval [StartLine/StartLineEnd, EndLine]
-        ans.Sort((x, y) => x.BlockCounter.CompareTo(y.BlockCounter));
-        int universalLinesOfCode = 0;
-        CountLinesOfCodeInSourceFile(sourceLines, ans, ref universalLinesOfCode);
 
-        return ans;
+        }
+
+        // very important to sort ascending based on discovery order (blockCounter) which means also based on the inteval [StartLine/StartLineEnd, EndLine]
+        foundBlocks.Sort((x, y) => x.BlockCounter.CompareTo(y.BlockCounter));
+        int universalLinesOfCode = 0;
+        List<int> debugUniversalLinesOfCodeIdxs = new();
+        CountLinesOfCodeInSourceFile(sourceLines, foundBlocks, ref universalLinesOfCode, debugUniversalLinesOfCodeIdxs);
+
+        return new EngineResult(foundBlocks, universalLinesOfCode, debugUniversalLinesOfCodeIdxs);
     }
 
     public static void Main(string[] args)
     {
-    
+
     }
 
-    
+
 }
