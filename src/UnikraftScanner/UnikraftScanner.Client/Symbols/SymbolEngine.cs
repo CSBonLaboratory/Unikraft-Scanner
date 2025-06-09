@@ -312,21 +312,21 @@ public class SymbolEngine
 
 
                 // lines between children
-                        for (int i = 0; i < currentBlock.Children.Count - 1; i += 2)
-                        {
-                            CompilationBlock childBlock = foundBlocks[currentBlock.Children[i] + 1]; // we increment since we added that fake root block that will be later removed
-                            CompilationBlock childNextBlock = foundBlocks[currentBlock.Children[i + 1] + 1];
-                            for (int j = childBlock.EndLine + 1; j < childNextBlock.StartLine; j++)
-                            {
-                                if (FastFindCodeLine(sourceLines[j]))
-                                {   
-                                    currentBlock.Lines++;
-                                    if (currentBlock.Equals(fakeWholeSourceRootBlock))
+                for (int i = 0; i < currentBlock.Children.Count - 1; i++)
+                {
+                    CompilationBlock childBlock = foundBlocks[currentBlock.Children[i] + 1]; // we increment since we added that fake root block that will be later removed
+                    CompilationBlock childNextBlock = foundBlocks[currentBlock.Children[i + 1] + 1];
+                    for (int j = childBlock.EndLine + 1; j < childNextBlock.StartLine; j++)
+                    {
+                        if (FastFindCodeLine(sourceLines[j]))
+                        {   
+                            currentBlock.Lines++;
+                            if (currentBlock.Equals(fakeWholeSourceRootBlock))
                                         universalLineIdxs.Add(j);
-                                }
-                            }
-
                         }
+                    }
+
+                }
 
                 CompilationBlock lastChild = foundBlocks[currentBlock.Children.Last() + 1];
                
