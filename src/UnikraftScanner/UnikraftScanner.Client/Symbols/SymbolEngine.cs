@@ -53,37 +53,48 @@ public class SymbolEngine
     private static string GetCondition(List<string> rawConditionLines)
     {
         /*
-        Symbol conditions of the preprocessor directives must:
+        Symbol conditions of the preprocessor directives have some rules applied to them in this order:
         
-        - new line character (\) followed by ending whitespaces must eliminate them (this is also a warning raised by compiler)
-        - be put on a single line
-        - replace multiple whitespaces with only 1 whitespace
-        - replace "#     ....." with "#....."
+        - 1. new line character (\) followed by ending whitespaces must eliminate them (this is also a warning raised by compiler)
+        - 2. be put on a single line so we need to remove the last backslash
+        - 3. replace multiple whitespaces with only 1 whitespace
+        - 4. replace "#     ....." with "#....."
+        - 5. replace "#<whitespace><directive name>" to "#<directive name>"
+        - 6. remove any whitespaces from the end of string
 
         */
         string tokens = "";
 
 
+        // eliminate trailing whitespace after a backslash and eliminate the backslash for concatenating all condition lines into a single line for viewing
         foreach (string line in rawConditionLines)
         {
             int possibleBackSlashEndPos = line.LastIndexOf("\\");
 
             if (possibleBackSlashEndPos == -1)
-                tokens += line.Replace("\\", "");
+                tokens += line;  // 1
             else
-                tokens += line.Substring(0, possibleBackSlashEndPos + 1).Replace("\\", "");
+                tokens += line.Substring(0, possibleBackSlashEndPos + 1).Replace("\\", "");   // 1 and 2
         }
 
-        string ans
-        = Regex.Replace(
+        string ans =
+        Regex.Replace(
             Regex.Replace(
-                tokens,
-                @"\s{2,}",
-                " "
+                Regex.Replace(
+                    Regex.Replace(
+                        tokens,
+                        @"\s{2,}",    // 3
+                        " "
+                    ),
+                    @"#\s+",    // 4
+                    "#"
+                ),
+                @"\s+#",    // 5
+                "#"
             ),
-            @"#\s+",
-            "#"
-            );
+            @"\s+$",  // 6
+            ""
+        );
         return ans;
 
     }
