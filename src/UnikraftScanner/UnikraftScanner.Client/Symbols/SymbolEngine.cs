@@ -252,11 +252,11 @@ public class SymbolEngine
         CompilationBlock fakeWholeSourceRootBlock = new CompilationBlock(
             type: ConditionalBlockTypes.ROOT,
             symbolCondition: "",
-            startLine: 1,
+            startLine: 0,
             blockCounter: -1,
-            startLineEnd: 1,
-            fakeEndLine: sourceLines.Count - 1,
-            endLine: sourceLines.Count - 1,
+            startLineEnd: 0,
+            fakeEndLine: sourceLines.Count,
+            endLine: sourceLines.Count,
             parentCounter: -1,
             lines: 0,
             children: orphanBlocksCounterCache  // dont forget to use incremented elements since this fake block will also be added to the block list
@@ -274,48 +274,67 @@ public class SymbolEngine
                 for (int i = currentBlock.StartLineEnd + 1; i < currentBlock.FakeEndLine; i++)
                 {
                     if (FastFindCodeLine(sourceLines[i]))
+                    {
                         currentBlock.Lines++;
+                        if (currentBlock.Equals(fakeWholeSourceRootBlock))
+                            universalLineIdxs.Add(i);
+                    }
                 }
             }
             else
             {
                 // count lines if current block also has embeded children
                 // a line of code for the current block is either from start of the current block until the first child,
-                // or between children (so it is not contained in any child)
+                // or between children (gaps) (so it is not contained in any child)
                 // or from last child until the end of the current block
 
-                int firstChildStartLine = foundBlocks[currentBlock.Children[0] + 1].StartLine;
+                CompilationBlock firstChild = foundBlocks[currentBlock.Children[0] + 1];
 
                 // lines before first child
-                for (int begin = currentBlock.StartLineEnd + 1; begin < firstChildStartLine; begin++)
+                for (int begin = currentBlock.StartLineEnd + 1; begin < firstChild.StartLine; begin++)
                     if (FastFindCodeLine(sourceLines[begin]))
+                    {
                         currentBlock.Lines++;
+                        if (currentBlock.Equals(fakeWholeSourceRootBlock))
+                            universalLineIdxs.Add(begin);
+                    }
 
 
                 // lines between children
-                for (int i = 0; i < currentBlock.Children.Count - 1; i += 2)
-                {
-                    CompilationBlock childBlock = foundBlocks[currentBlock.Children[i] + 1]; // we increment since we added that fake root block that will be later removed
-                    CompilationBlock childNextBlock = foundBlocks[currentBlock.Children[i + 1] + 1];
-                    for (int j = childBlock.EndLine + 1; j < childNextBlock.StartLine; j++)
-                    {
-                        if (FastFindCodeLine(sourceLines[j]))
-                            currentBlock.Lines++;
-                    }
+                        for (int i = 0; i < currentBlock.Children.Count - 1; i += 2)
+                        {
+                            CompilationBlock childBlock = foundBlocks[currentBlock.Children[i] + 1]; // we increment since we added that fake root block that will be later removed
+                            CompilationBlock childNextBlock = foundBlocks[currentBlock.Children[i + 1] + 1];
+                            for (int j = childBlock.EndLine + 1; j < childNextBlock.StartLine; j++)
+                            {
+                                if (FastFindCodeLine(sourceLines[j]))
+                                {   
+                                    currentBlock.Lines++;
+                                    if (currentBlock.Equals(fakeWholeSourceRootBlock))
+                                        universalLineIdxs.Add(j);
+                                }
+                            }
 
-                }
+                        }
 
                 CompilationBlock lastChild = foundBlocks[currentBlock.Children.Last() + 1];
+               
                 // lines after last child
                 for (int i = lastChild.EndLine + 1; i < currentBlock.FakeEndLine; i++)
                 {
                     if (FastFindCodeLine(sourceLines[i]))
+                    {
                         currentBlock.Lines++;
+                        if (currentBlock.Equals(fakeWholeSourceRootBlock))
+                            universalLineIdxs.Add(i);
+                    }
                 }
             }
         }
 
         universalLinesOfCode = foundBlocks[0].Lines;
+
+        foundBlocks.RemoveAt(0);
     }
 
     public EngineResult FindCompilationBlocksAndLines(string sourceFileAbsPath, InterceptorOptions opts)
