@@ -22,7 +22,8 @@ public class NestedComplexTest : BaseSymbolTest
         */
         var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
             Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/inputs/nested_complex.c"),
-            opts: SymbolTestEnv.Opts
+            opts: SymbolTestEnv.Opts,
+            includesSubCommand: "-I/usr/include"
             );
 
 

@@ -20,7 +20,8 @@ public class IncludeCheckMainFileTest : BaseSymbolTest
         */
         var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
             Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/inputs/include_check_mainFile.c"),
-            opts: SymbolTestEnv.Opts
+            opts: SymbolTestEnv.Opts,
+            includesSubCommand: "-I/usr/include"
             );
 
         var expected = new List<CompilationBlock>{

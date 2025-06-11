@@ -21,7 +21,8 @@ public class PaddingTest : BaseSymbolTest
 
         var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
             Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/inputs/padding_allignment.c"),
-            opts: SymbolTestEnv.Opts
+            opts: SymbolTestEnv.Opts,
+            includesSubCommand: "-I/usr/include"
             );
 
 

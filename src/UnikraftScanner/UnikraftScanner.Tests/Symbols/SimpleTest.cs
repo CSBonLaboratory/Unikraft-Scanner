@@ -22,7 +22,8 @@ public class SimpleTest : BaseSymbolTest
         */
         var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
             Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/inputs/simple.c"),
-            SymbolTestEnv.Opts
+            SymbolTestEnv.Opts,
+            includesSubCommand: "-I/usr/include"
             );
 
 

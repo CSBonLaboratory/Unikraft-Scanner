@@ -29,7 +29,8 @@ public class MultiLineTest : BaseSymbolTest
         */
         SymbolEngine.EngineResult actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
             Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/inputs/multi_line.c"),
-            opts: SymbolTestEnv.Opts
+            opts: SymbolTestEnv.Opts,
+            includesSubCommand: "-I/usr/include"
             );
 
 

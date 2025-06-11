@@ -25,7 +25,8 @@ public class ShawarmaTest : BaseSymbolTest
         .GetInstance()
         .FindCompilationBlocksAndLines(
             Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/inputs/shawarma.c"),
-            SymbolTestEnv.Opts
+            SymbolTestEnv.Opts,
+            includesSubCommand: "-I/usr/include"
             );
 
 

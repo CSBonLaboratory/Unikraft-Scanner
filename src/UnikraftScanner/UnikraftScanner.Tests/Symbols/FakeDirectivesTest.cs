@@ -34,7 +34,8 @@ public class FakeDirectivesTest : BaseSymbolTest
         */
         var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
             Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/inputs/fake_directives.c"),
-            opts: SymbolTestEnv.Opts
+            opts: SymbolTestEnv.Opts,
+            includesSubCommand: "-I/usr/include"
             );
 
         var expected = new List<CompilationBlock>{
