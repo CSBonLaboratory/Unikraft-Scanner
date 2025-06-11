@@ -182,43 +182,56 @@ public class SymbolEngine
 
     }
 
-    private string[] ExecutePlugin(string sourceFileAbsPath, InterceptorOptions opts)
+    private string[] ExecuteTriggeringPlugin(string fullCompilationCommand, InterceptorOptions opts)
     {
-        ProcessStartInfo startInfo = new ProcessStartInfo(opts.CompilerPath);
-        //startInfo.FileName = opts.CompilerPath;
+        ProcessStartInfo pluginProc = new ProcessStartInfo(opts.CompilerPath);
+
+        pluginProc.Arguments = fullCompilationCommand;
+
+        return StartPlugin(pluginProc, opts);
+    }
+    private string[] ExecuteDiscoveryPlugin(string sourceFileAbsPath, InterceptorOptions opts, string includesSubCommand)
+    {
+        ProcessStartInfo pluginProc = new ProcessStartInfo(opts.CompilerPath);
 
         // trigger plugin execution on tthe source file
-        startInfo.Arguments = $" -I/usr/include {sourceFileAbsPath}";
+        pluginProc.Arguments = $" {includesSubCommand} {sourceFileAbsPath}";
 
         // // compilation flags used to ignore #include, #define, #line directives that may interfere with the exact locations of the conditional blocks
-        startInfo.Arguments += " -Wall -Wextra -E -fdirectives-only -dD -P";
+        pluginProc.Arguments += " -Wall -Wextra -E -fdirectives-only -dD -P";
 
+        return StartPlugin(pluginProc, opts);
+        
+    }
+
+    private string[] StartPlugin(ProcessStartInfo pluginProc, InterceptorOptions opts)
+    {
         // // inform clang that it needs to execute our plugin
         // // https://clang.llvm.org/docs/ClangPlugins.html
         // // plugin name is hardcoded here and in the plugin source code (BlockInterceptorPlugin.cxx)
-        startInfo.Arguments += " -Xclang -load";
-        startInfo.Arguments += $" -Xclang {opts.PluginPath}";
-        startInfo.Arguments += " -Xclang -plugin";
-        startInfo.Arguments += $" -Xclang ConditionalBlockFinder";
+        pluginProc.Arguments += " -Xclang -load";
+        pluginProc.Arguments += $" -Xclang {opts.PluginPath}";
+        pluginProc.Arguments += " -Xclang -plugin";
+        pluginProc.Arguments += $" -Xclang ConditionalBlockFinder";
 
         // // pass where to put results about intercepted plugin blocks after plugin execution
-        startInfo.Arguments += $" -Xclang -plugin-arg-ConditionalBlockFinder";
-        startInfo.Arguments += $" -Xclang {opts.InterceptionResultsFilePath}";
+        pluginProc.Arguments += $" -Xclang -plugin-arg-ConditionalBlockFinder";
+        pluginProc.Arguments += $" -Xclang {opts.InterceptionResultsFilePath}";
 
         // // should plugin parse conditional blocks inside a block that was evaluated as false
         // // for now, do not exclude them since we need to find all conditional blocks
         // // we will exclude them at the second stage when we need to find which ones are compiled (evaluated to true)
-        startInfo.Arguments += $" -Xclang -plugin-arg-ConditionalBlockFinder";
-        startInfo.Arguments += $" -Xclang TRUE";
+        pluginProc.Arguments += $" -Xclang -plugin-arg-ConditionalBlockFinder";
+        pluginProc.Arguments += $" -Xclang TRUE";
 
 
-        startInfo.CreateNoWindow = true;
-        startInfo.RedirectStandardError = true;
-        startInfo.RedirectStandardOutput = true;
+        pluginProc.CreateNoWindow = true;
+        pluginProc.RedirectStandardError = true;
+        pluginProc.RedirectStandardOutput = true;
 
-        startInfo.UseShellExecute = false;
+        pluginProc.UseShellExecute = false;
 
-        var generalInterceptor = Process.Start(startInfo);
+        var generalInterceptor = Process.Start(pluginProc);
 
         string interceptOut = generalInterceptor.StandardOutput.ReadToEnd();
         Console.WriteLine(generalInterceptor.StandardError.ReadToEnd());
@@ -319,17 +332,17 @@ public class SymbolEngine
                     for (int j = childBlock.EndLine + 1; j < childNextBlock.StartLine; j++)
                     {
                         if (FastFindCodeLine(sourceLines[j]))
-                        {   
+                        {
                             currentBlock.Lines++;
                             if (currentBlock.Equals(fakeWholeSourceRootBlock))
-                                        universalLineIdxs.Add(j);
+                                universalLineIdxs.Add(j);
                         }
                     }
 
                 }
 
                 CompilationBlock lastChild = foundBlocks[currentBlock.Children.Last() + 1];
-               
+
                 // lines after last child
                 for (int i = lastChild.EndLine + 1; i < currentBlock.FakeEndLine; i++)
                 {
@@ -348,7 +361,7 @@ public class SymbolEngine
         foundBlocks.RemoveAt(0);
     }
 
-    public EngineResult FindCompilationBlocksAndLines(string sourceFileAbsPath, InterceptorOptions opts)
+    public EngineResult FindCompilationBlocksAndLines(string sourceFileAbsPath, InterceptorOptions opts, string includesSubCommand)
     {
 
         List<CompilationBlock> foundBlocks = new();
@@ -356,7 +369,7 @@ public class SymbolEngine
         // since this method is used only once on a source file we need to reset the cache
         orphanBlocksCounterCache = new List<int>();
 
-        string[] rawBlocks = ExecutePlugin(sourceFileAbsPath, opts);
+        string[] rawBlocks = ExecuteDiscoveryPlugin(sourceFileAbsPath, opts, includesSubCommand);
 
         List<string> sourceLines = RemoveComments(File.ReadAllText(sourceFileAbsPath)).Split("\n").ToList();
 
