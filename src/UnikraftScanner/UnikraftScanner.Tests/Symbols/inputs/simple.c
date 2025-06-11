@@ -1,15 +1,15 @@
 #define AAAAAAA "aaa"
 #undef AAAAAAA
+#include <stdio.h>
 int main(){
 
     int x;
 
-#ifdef CONFIG_1
+#if 1
     int a;
     x = a + 5;
 #endif
-
-#ifndef CONFIG_1
+#if !0
     printf("aaaaaa");
     
 
@@ -17,8 +17,12 @@ int main(){
 
 #endif
 
+char* zaza = "wise mystical \
+tree";
 
-#if defined(CONFIG_1) && !defined(CONFIG_2)
+            float brbr_patapim = 69;
+            
+#if 1  \  
     
     printf("zzzzzzz");
 
@@ -32,7 +36,6 @@ int main(){
     }
     x=7;
     printf("xxxxxx");
-#endif
 
     if(x==7){
         printf("qq");
@@ -41,3 +44,4 @@ int main(){
     printf("aaaaaa");
     return 0;
 }
+#endif

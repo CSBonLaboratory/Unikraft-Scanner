@@ -1,0 +1,59 @@
+{ 
+
+"version": 1,
+
+"logDirectory": "string | Path to directory that contains log files. Multiple files are used when running with multi-thread option",
+
+"preprocFilePath": "string | ",
+
+"outFilePath": "string | Path to file used as display results when tool is run in CLI mode",
+
+"verbose": "1|2|3|4|5",
+
+"compilerPlugin":{
+
+  "compilerPath" : "string | Absolute path to clang used for plugin and comditional block interception",
+
+  "pluginPath" : "string | Path  where compiler will be built or already exists. Used by default by the tool",
+
+  "interceptionResultsFilePath" : "string | Path of a file containg results from plugin execution (preprocessor conditional blocks)"
+  },
+
+"unikraftCoverageDB" :{
+
+  "pass": "string | REDACTED",
+
+  "ip": "string | REDACTED",
+
+  "port": "int | REDACTED"
+
+  },
+
+"coverityAPI": {
+
+  "covSuitePath": "",
+
+  
+  "firefoxPath": "",
+
+  "geckoPath": "",
+
+  "installGecko": "N/Y",
+
+  "projectName": "string | name of the project in the Coverity Scan homepage",
+
+  "projectOverviewURL": "string | https://scan.coverity.com/projects/unikraft-scanning?tab=overview",
+
+  "scraperWaitSeconds" : "int | How many seconds does the scraper wait for web elements to appear in order to interact with them.",
+
+  "interceptorTimeoutSeconds" : "int | How many seconds does the scraper wait for the right packages from Coverity. It used during defect fetching",
+
+  "snapshotPollingSeconds" : "int | How many seconds does the tool wait for before polling the status of the upload operation to Coverity. The ammount of time the tool waits for the build to be analyzed = snapshotPollingSeconds * recentSnapshotRetries ",
+
+  "recentSnapshotRetries" : "int | How many polling operations does the tool execute",
+
+  "uploadTokenEnv": "string | Variable used to store the secret Coverity upload API token.",
+
+  "userEmail": "string |  Environment variable used to store email address of the user's Coverity account. Use the email address linked with Github if authentication was done this way"
+  }
+}

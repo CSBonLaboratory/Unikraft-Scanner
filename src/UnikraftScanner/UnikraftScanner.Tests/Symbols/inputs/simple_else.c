@@ -1,17 +1,17 @@
+#include <stdio.h>
 int main(){
-
     int x = 6;
 
-#ifndef CONFIG_1
+#ifdef CONFIG_1
     printf("aaaa");
     int a = 7;
     int q = 7 + \
     5;
-    if(x == 42)
+    if(x == 42){
         printf("ZZZZ");
 #elif CONFIG_1 || CONFIG_2
+    int a = 69; }
     else{
-        x = 6;
         int q = 42;
     }
 #elif !CONFIG_2
@@ -23,7 +23,7 @@ int main(){
     int c = 7;
 
 #endif
-
+float graram = 7.65;
 #ifdef CONFIG_KVMPLAT
     printf("aaa");
 #elif !CONFIG_RUST

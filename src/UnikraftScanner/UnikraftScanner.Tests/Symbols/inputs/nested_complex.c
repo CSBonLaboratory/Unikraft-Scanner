@@ -1,14 +1,14 @@
 int main(){
 
 
-#   ifdef A
-#elif B
+#   if defined(A)
+#elif defined(B)
     #ifndef E
         #if defined(G)
         #elif defined(H)
         #else
             #ifndef I
-            #elif defined(J)
+            #elif !defined(J)
             #endif
         #endif
     #endif
@@ -17,9 +17,9 @@ int main(){
 
     #ifndef B
     #endif
-#   elif C
+#   elif defined(C)
 
-#elif D
+#elif !defined(D)
 
     #if defined(K)
     #endif
@@ -30,9 +30,9 @@ int main(){
 
 
 #if defined(Z)
-#if defined(V)
-#if defined(M)
-#if defined(N)
+#ifdef V
+#ifndef M
+#if !defined(N)
 #endif
 #endif
 #endif
