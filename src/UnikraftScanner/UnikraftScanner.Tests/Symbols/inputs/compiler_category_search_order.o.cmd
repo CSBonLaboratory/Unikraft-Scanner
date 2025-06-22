@@ -1,0 +1,1 @@
+""clang++-18 -c /home/crypto/main.c -o /home/crypto/main.o

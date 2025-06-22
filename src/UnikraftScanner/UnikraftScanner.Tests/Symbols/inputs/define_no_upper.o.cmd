@@ -1,0 +1,1 @@
+""gcc -d AAA -D BBB -uBBB -fake1 -fake2 -u AAA -fake3 -dXXX

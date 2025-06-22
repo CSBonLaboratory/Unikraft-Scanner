@@ -1,0 +1,1 @@
+""g++ -DAAAA -no-define-flag -no-define-flag1 -D YYY -flag2 -U YYY -flag3 -D XXX -DA -UQQ -U ZS

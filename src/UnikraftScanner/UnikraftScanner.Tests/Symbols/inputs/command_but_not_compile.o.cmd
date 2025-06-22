@@ -1,0 +1,1 @@
+""objcopy --keep-global-symbols=/home/karakitay/Desktop/catalog/library/nginx/1.25/.unikraft/apps/elfloader/exportsyms.uk       /home/karakitay/Desktop/catalog/library/nginx/1.25/.unikraft/build/appelfloader.ld.o /home/karakitay/Desktop/catalog/library/nginx/1.25/.unikraft/build/appelfloader.o
