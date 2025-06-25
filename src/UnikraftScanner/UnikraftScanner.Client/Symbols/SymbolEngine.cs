@@ -12,6 +12,8 @@ internal class CompilerPlugin
     private PluginOptions _opts { get; init; }
     public CompilerPlugin(string fullCompilationCommand, PluginOptions opts)
     {
+        // given the normal compilation command of a C-family source file, enrich it with clang plugin flags and prepare plugin process
+
         _plugin = new ProcessStartInfo(opts.CompilerPath);
 
         _opts = opts;
@@ -363,10 +365,11 @@ public class SymbolEngine
         // since this method is used only once on a source file we need to reset the cache
         orphanBlocksCounterCache = new List<int>();
 
-        // the decision of using the compiler in Discovery (first passing) or in Triggering (second passing) is done outside this method
-        string[] rawBlocks = new CompilerPlugin(targetCompilationCommand, opts).ExecutePlugin();
-
+        // remove comments before executing the compiler in order to not count them as code lines
         List<string> sourceLines = RemoveComments(File.ReadAllText(sourceFileAbsPath)).Split("\n").ToList();
+
+        // the decision of using the compiler in Discovery stage (first passing) or in Triggering stage (second passing) is done outside SymbolEngine
+        string[] rawBlocks = new CompilerPlugin(targetCompilationCommand, opts).ExecutePlugin();
 
         // we just add a blank line so that line indexes start from 1 just to match line numbers counted by the plugin (most IDEs count lines starting from 1)
         sourceLines.Insert(0, "");
@@ -377,7 +380,6 @@ public class SymbolEngine
 
         foreach (string block in rawBlocks)
         {
-
             // each info line in each block is on a particular line
             string[] blockInfoLines = block.Split("\n");
 
