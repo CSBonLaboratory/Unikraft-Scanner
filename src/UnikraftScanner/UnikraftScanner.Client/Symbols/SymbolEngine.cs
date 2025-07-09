@@ -2,69 +2,14 @@
 using UnikraftScanner.Client.Helpers;
 using System.IO;
 using System.Text.RegularExpressions;
-using System.Diagnostics;
 
-
-internal class CompilerPlugin
-{
-    private ProcessStartInfo _plugin { get; init; }
-
-    private PluginOptions _opts { get; init; }
-    public CompilerPlugin(string fullCompilationCommand, PluginOptions opts)
-    {
-        // given the normal compilation command of a C-family source file, enrich it with clang plugin flags and prepare plugin process
-
-        _plugin = new ProcessStartInfo(opts.CompilerPath);
-
-        _opts = opts;
-
-        _plugin.Arguments = fullCompilationCommand;
-
-        // // inform clang that it needs to execute our plugin
-        // // https://clang.llvm.org/docs/ClangPlugins.html
-        // // plugin name is hardcoded here and in the plugin source code (BlockInterceptorPlugin.cxx) at static FrontendPluginRegistry decclaration
-        _plugin.Arguments += " -Xclang -load";
-        _plugin.Arguments += $" -Xclang {opts.PluginPath}";
-        _plugin.Arguments += " -Xclang -plugin";
-        _plugin.Arguments += $" -Xclang ConditionalBlockFinder";
-
-        // // pass where to put results about intercepted plugin blocks after plugin execution
-        _plugin.Arguments += $" -Xclang -plugin-arg-ConditionalBlockFinder";
-        _plugin.Arguments += $" -Xclang {opts.InterceptionResultsFilePath_PluginParam}";
-
-        // // should plugin parse conditional blocks inside a block that was evaluated as false
-        // // for now, do not exclude them since we need to find all conditional blocks
-        // // we will exclude them at the second stage when we need to find which ones are compiled (evaluated to true)
-        _plugin.Arguments += $" -Xclang -plugin-arg-ConditionalBlockFinder";
-        _plugin.Arguments += $" -Xclang {opts.RetainExcludedBlocks_PluginParam}";
-
-
-        _plugin.CreateNoWindow = true;
-        _plugin.RedirectStandardError = true;
-        _plugin.RedirectStandardOutput = true;
-
-        _plugin.UseShellExecute = false;
-
-    }
-    
-    public string[] ExecutePlugin()
-    {
-        var generalInterceptor = Process.Start(_plugin);
-
-        string interceptOut = generalInterceptor.StandardOutput.ReadToEnd();
-        Console.WriteLine(generalInterceptor.StandardError.ReadToEnd());
-
-        generalInterceptor.WaitForExit();
-
-        string pluginResults = File.ReadAllText(_opts.InterceptionResultsFilePath_PluginParam);
-
-        // blocks are split by an empty line
-        return pluginResults.Split("\n\n").Where(e => e != "").ToArray();
-    }
-}
 public class SymbolEngine
 {
-    public record EngineResult(List<CompilationBlock> Blocks, int UniversalLinesOfCode, List<int> debugUniveralLinesOfCodeIdxs);
+    public record EngineResult(
+        List<CompilationBlock> Blocks, int UniversalLinesOfCode,
+        List<int> debugUniveralLinesOfCodeIdxs,  // used only for debugging in testing the lines of code
+        List<List<int>> debugLinesOfCodeBlocks   // used only for debugging in testing the lines of code, decouple it from Compilation Blocks class
+    );
     private static SymbolEngine? instance = null;
     private SymbolEngine() { }
 
@@ -162,8 +107,7 @@ public class SymbolEngine
 
         startLine = int.Parse(blockInfoLines[0].Split()[2]);
 
-        // very important to also compare the space since without it IFNDEF, IFDEF and ELIF can be also accepted on this branch
-        // format is IF <start line> <start column>
+        // format is <ID NUMBER FOR ANY BLOCK ACCORDING TO ConditionalBlockTypes.cs> IF/IFDEF/IFNDEF/ELIF/ELSE/ENDIF <start line> <start column>
         if (directiveType == ConditionalBlockTypes.IF)
         {
 
@@ -240,22 +184,8 @@ public class SymbolEngine
 
     }
 
-    private void CountLinesOfCodeInSourceFile(List<string> sourceLines, List<CompilationBlock> foundBlocks, ref int universalLinesOfCode, List<int> universalLineIdxs)
+    private void CountLinesOfCodeInSourceFile(List<string> sourceLines, List<CompilationBlock> foundBlocks, ref int universalLinesOfCode, List<int> debugUniversalLineIdxs, List<List<int>> debugLinesOfCodeBlocks)
     {
-
-        if (this.orphanBlocksCounterCache.Count == 0)
-        {
-            // dont forget ! we start from 1 because we also add a new line so that startLine/endLine should start at 1 like many IDEs
-            for (int i = 1; i < sourceLines.Count; i++)
-                if (FastFindCodeLine(sourceLines[i]))
-                {
-                    universalLinesOfCode++;
-
-                    universalLineIdxs.Add(i);
-                }
-            return;
-        }
-
         bool FastFindCodeLine(string line)
         {
             bool foundC = false;
@@ -269,6 +199,22 @@ public class SymbolEngine
             return foundC;
         }
 
+        // corner case when we dont have embbeded compilation blocks
+        if (this.orphanBlocksCounterCache.Count == 0)
+        {
+            // dont forget ! we start from 1 because we also add a new line so that startLine/endLine should start at 1 like many IDEs
+            for (int i = 1; i < sourceLines.Count; i++)
+                if (FastFindCodeLine(sourceLines[i]))
+                {
+                    universalLinesOfCode++;
+
+                    debugUniversalLineIdxs.Add(i);
+                }
+            return;
+        }
+
+    
+        // add a fake compilation block that represents the whole source file
         CompilationBlock fakeWholeSourceRootBlock = new CompilationBlock(
             type: ConditionalBlockTypes.ROOT,
             symbolCondition: "",
@@ -296,8 +242,15 @@ public class SymbolEngine
                     if (FastFindCodeLine(sourceLines[i]))
                     {
                         currentBlock.Lines++;
+
+                        // used only for debugging in tests
+#if TEST_SYMBOL_CODE_LINES
                         if (currentBlock.Equals(fakeWholeSourceRootBlock))
-                            universalLineIdxs.Add(i);
+                            debugUniversalLineIdxs.Add(i);
+                        else
+                            debugLinesOfCodeBlocks[currentBlock.BlockCounter].Add(i);
+#endif
+
                     }
                 }
             }
@@ -308,6 +261,7 @@ public class SymbolEngine
                 // or between children (gaps) (so it is not contained in any child)
                 // or from last child until the end of the current block
 
+                // + 1 here is added because we also previously added the fake compilation block for the whole source file
                 CompilationBlock firstChild = foundBlocks[currentBlock.Children[0] + 1];
 
                 // lines before first child
@@ -315,8 +269,15 @@ public class SymbolEngine
                     if (FastFindCodeLine(sourceLines[begin]))
                     {
                         currentBlock.Lines++;
+
+                        // used only for debugging in tests
+#if TEST_SYMBOL_CODE_LINES
                         if (currentBlock.Equals(fakeWholeSourceRootBlock))
-                            universalLineIdxs.Add(begin);
+                            debugUniversalLineIdxs.Add(begin);
+                        else
+                            debugLinesOfCodeBlocks[currentBlock.BlockCounter].Add(begin);
+#endif
+
                     }
 
 
@@ -330,8 +291,14 @@ public class SymbolEngine
                         if (FastFindCodeLine(sourceLines[j]))
                         {
                             currentBlock.Lines++;
+
+                            // used only for debugging in tests
+#if TEST_SYMBOL_CODE_LINES
                             if (currentBlock.Equals(fakeWholeSourceRootBlock))
-                                universalLineIdxs.Add(j);
+                                debugUniversalLineIdxs.Add(j);
+                            else
+                                debugLinesOfCodeBlocks[currentBlock.BlockCounter].Add(i);
+#endif
                         }
                     }
 
@@ -345,8 +312,14 @@ public class SymbolEngine
                     if (FastFindCodeLine(sourceLines[i]))
                     {
                         currentBlock.Lines++;
+
+                        // used only for debugging in tests
+#if TEST_SYMBOL_CODE_LINES
                         if (currentBlock.Equals(fakeWholeSourceRootBlock))
-                            universalLineIdxs.Add(i);
+                            debugUniversalLineIdxs.Add(i);
+                        else
+                            debugLinesOfCodeBlocks[currentBlock.BlockCounter].Add(i);
+#endif
                     }
                 }
             }
@@ -488,17 +461,32 @@ public class SymbolEngine
 
         }
 
-        // very important to sort ascending based on discovery order (blockCounter) which means also based on the inteval [StartLine/StartLineEnd, EndLine]
+        // very important to sort ascending based on discovery order (blockCounter) which means also based on the inteval [StartLine/StartLineEnd, FakeEndLine/EndLine]
         foundBlocks.Sort((x, y) => x.BlockCounter.CompareTo(y.BlockCounter));
         int universalLinesOfCode = 0;
-        List<int> debugUniversalLinesOfCodeIdxs = new();
-        CountLinesOfCodeInSourceFile(sourceLines, foundBlocks, ref universalLinesOfCode, debugUniversalLinesOfCodeIdxs);
 
-        return new EngineResult(foundBlocks, universalLinesOfCode, debugUniversalLinesOfCodeIdxs);
+        List<int> debugUniversalLinesOfCodeIdxs = new();
+        List<List<int>> debugLinesOfCodeBlocks = Enumerable.Repeat(new List<int>(), foundBlocks.Count).ToList();
+
+        CountLinesOfCodeInSourceFile(sourceLines, foundBlocks, ref universalLinesOfCode, debugUniversalLinesOfCodeIdxs, debugLinesOfCodeBlocks);
+
+        return new EngineResult(foundBlocks, universalLinesOfCode, debugUniversalLinesOfCodeIdxs, debugLinesOfCodeBlocks);
     }
 
     public static void Main(string[] args)
     {
+        PluginOptions Opts = new PluginOptions(
+            compilerPath: "/usr/bin/clang-18",
+            pluginPath: "/home/karakitay/Desktop/Unikraft-Scanner/src/UnikraftScanner/UnikraftScanner.Tests/Symbols/dependencies/TestPluginBlockFinder.so",
+            interceptionResFilePath: "/home/karakitay/Desktop/Unikraft-Scanner/src/UnikraftScanner/UnikraftScanner.Tests/Symbols/dependencies/results.txt"
+        );
+
+        var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
+            "/home/karakitay/Desktop/Unikraft-Scanner/src/UnikraftScanner/UnikraftScanner.Tests/Symbols/Discovery/inputs/simple_else.c",
+            opts: Opts,
+            targetCompilationCommand: $"{Opts.CompilerPath} -I/usr/include -c  /home/karakitay/Desktop/Unikraft-Scanner/src/UnikraftScanner/UnikraftScanner.Tests/Symbols/Discovery/inputs/simple_else.c {DiscoveryStageCommandParser.additionalFlags}"
+        );
+
 
     }
 

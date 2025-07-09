@@ -19,7 +19,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\UnikraftScanner.Client\UnikraftScanner.Client.csproj" />
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Pass property to the tested code fixing https://github.com/CSBonLaboratory/Unikraft-Scanner/issues/13 -->
+  <ItemGroup>
+    <ProjectReference Include="..\UnikraftScanner.Client\UnikraftScanner.Client.csproj">
+       <AdditionalProperties>TestSymbolCodeLines=enable</AdditionalProperties>
+    </ProjectReference>
   </ItemGroup>
 
 </Project>
