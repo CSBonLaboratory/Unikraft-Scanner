@@ -13,7 +13,7 @@ public class FakeDirectivesTest : BaseSymbolTest
     private readonly ITestOutputHelper output;
 
     [Fact]
-    public void FindCompilationBlocks_Comments_MultiLine_Directives_In_Code()
+    public void FindCompilationBlocks_Comments_CodeMultiLine_DirectivesAsStringsAndVariables()
     {
         /*
         Code is also multiline, every incomplete multiline is counted a compiled line.
@@ -32,20 +32,22 @@ public class FakeDirectivesTest : BaseSymbolTest
         Second compilation block used to force parsing of source lines that contain a struct with a special token name.
         It also tests how lines of code are counted. It contains multi code line with a line that only contains the backslash char
         */
-        var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
-            Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/inputs/fake_directives.c"),
-            opts: SymbolTestEnv.Opts,
-            includesSubCommand: "-I/usr/include"
-            );
 
-        var expected = new List<CompilationBlock>{
+        string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/Discovery/inputs/fake_directives.c");
+
+        var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
+            sourceFileAbsPath,
+            opts: SymbolTestEnv.Opts,
+            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath} {DiscoveryStageCommandParser.additionalFlags}"
+        );
+
+        List<CompilationBlock> expected = [
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.IFDEF,
+                    type: CompilationBlockTypes.IFDEF,
                     symbolCondition : "#ifdef B",
                     startLine: 16,
                     startLineEnd: 16,
-                    fakeEndLine: 21,
                     endLine: 21,
                     blockCounter : 0,
                     parentCounter : -1,
@@ -54,26 +56,38 @@ public class FakeDirectivesTest : BaseSymbolTest
 
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.IF,
+                    type: CompilationBlockTypes.IF,
                     symbolCondition : "#if !defined(A)",
                     startLine: 75,
                     startLineEnd: 75,
-                    fakeEndLine: 85,
                     endLine: 85,
                     blockCounter : 1,
                     parentCounter : -1,
                     lines: 4,
                     children: null)
-            };
+        ];
 
-        AssertSymbolEngine.TestSymbolEngineBlockResults(expected, actual.Blocks);
-        
+        List<CompilationBlock> actualBlocks = actual.Blocks;
+        AssertSymbolEngine.TestCustomLists<CompilationBlock>(expected, actualBlocks, "Check compilation blocks:");
+
         // comments should have been eliminated before parsing the source file for compilation blocks and lines of code counting
+        List<int> expectedUniversalLines = new() { 2, 3, 14, 15, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 41, 42, 43, 47, 48, 49, 50, 51, 53, 54, 55, 57, 68, 70, 71, 72, 73, 87 };
         AssertSymbolEngine.TestUniversalLinesOfCode(
-            36,
-            new() { 2, 3, 14, 15, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 41, 42, 43, 47, 48, 49, 50, 51, 53, 54, 55, 57, 68, 70, 71, 72, 73, 87 },
+            expectedUniversalLines.Count,
+            expectedUniversalLines,
             actual.UniversalLinesOfCode,
             actual.debugUniveralLinesOfCodeIdxs
         );
+
+        List<List<int>> expectedCodeLinesInBlocks = [
+            [17, 18, 19],
+            [81, 82, 83, 84]
+        ];
+
+        List<List<int>> actualCodeLinesInBlocks = actual.debugLinesOfCodeBlocks;
+
+        AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
+
+
     }
 }

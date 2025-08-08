@@ -10,21 +10,11 @@ public class CompilationBlock : IEquatable<CompilationBlock>
     
     public int StartLine {get; set;}
     public int StartLineEnd {get; set;}  // some compilation blocks may have a multi line condition
-    public int EndLine {get; set;}
-
-    // used for compilation blocks that have #endif directive multiline (split using \ on multiple lines)
-    /* 
-        1:#en\
-        2:d\
-        3:i\
-        4:f\
-    */
-    // this means that FakeEndLine will be on line 1 and EndLine will be on 4
-    public int FakeEndLine { get; set; } 
+    public int EndLine {get; set;} 
     public int BlockCounter { get; set; }
     public int ParentCounter {get; set;}
 
-    public ConditionalBlockTypes CBType { get; set; }
+    public CompilationBlockTypes CBType { get; set; }
 
     // lines of code that will be compiled
     public int Lines {get; set;}
@@ -47,28 +37,26 @@ public class CompilationBlock : IEquatable<CompilationBlock>
     }
 
     public CompilationBlock(
-        ConditionalBlockTypes type,
+        CompilationBlockTypes type,
         string condition,
         int startLine,
         int blockCounter,
         int startLineEnd,
-        int fakeEndLine,
         int endLine,
         int parentCounter) : this(condition, startLine, blockCounter){
 
         CBType = type;
         StartLineEnd = startLineEnd;
-        FakeEndLine = fakeEndLine;
+        
         EndLine = endLine;
         ParentCounter = parentCounter;
     } 
 
     public CompilationBlock(
-        ConditionalBlockTypes type,
+        CompilationBlockTypes type,
         string symbolCondition,
         int startLine,
         int startLineEnd,
-        int fakeEndLine,
         int endLine,
         int blockCounter,
         int parentCounter,
@@ -77,7 +65,6 @@ public class CompilationBlock : IEquatable<CompilationBlock>
         
         CBType = type;
         StartLineEnd = startLineEnd;
-        FakeEndLine = fakeEndLine;
         EndLine = endLine;
         BlockCounter = blockCounter;
         ParentCounter = parentCounter;
@@ -92,7 +79,6 @@ public class CompilationBlock : IEquatable<CompilationBlock>
             Condition: {SymbolCondition}, 
             StartLine: {StartLine},
             StartLineEnd: {StartLineEnd},
-            FakeEndLine: {FakeEndLine},
             EndLine: {EndLine},
             BlockCounter: {BlockCounter},
             ParentCounter: {ParentCounter},
@@ -107,19 +93,22 @@ public class CompilationBlock : IEquatable<CompilationBlock>
         return res;
     }
 
+    // very important when comparing generic lists like in PrepareSymbolMain.cs TestCustomLists<CompilationBlocks>
+    // https://stackoverflow.com/questions/36235271/c-sharp-using-equals-method-in-a-generic-list-fails
+    public override bool Equals(object? obj) => Equals(obj as CompilationBlock);
+
     public bool Equals(CompilationBlock? b)
     {
-
         if (
             this.StartLine == b.StartLine &&
             this.SymbolCondition.Equals(b.SymbolCondition) &&
             this.StartLineEnd == b.StartLineEnd &&
-            this.FakeEndLine == b.FakeEndLine &&
             this.EndLine == b.EndLine &&
             this.BlockCounter == b.BlockCounter &&
             this.Lines == b.Lines
         )
         {
+
             if (this.Children == null && b.Children == null)
                 return true;
 

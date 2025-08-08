@@ -26,6 +26,9 @@ int k \
 int a;
 #endif
 
+#define TW(){\
+  int tw = 7;\
+}
 int main() \
 \
 {
@@ -34,26 +37,47 @@ int main() \
 int x;
 #endif
 
-#i\
-f\
-\
-\
- defined(A)
+#ifdef XYZ\
+TW
+  TW();
+#endif
 
+#ifndef XYZ\
+TW
+  TW();
+#endif
+
+#ifndef OPR\
+  STUV
+  char s[12] = "aa\
+           a";
+#endif 
+#if defined(A\
+B\
+\
+CD\
+\
+\
+EF )
+
+      
 int tung_tung_tung_sahur = 8;
 if(4 < 1)return 0;
 
-#\
-elif defined(SAHUR) |\
+#elif defined(SAHUR) |\
 | defined(ABC\
-DE)
-float e = 3.712;
-#e\           
-ls\
-e
+\
+    \
+        \
+DE      )
+float e = 3.712;\
+\
+
+\
+
+#else\
+\
+
 int tralalero_tralala = 9;
-#end\
-\
-\
-if
+#endif
 }

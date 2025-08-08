@@ -1,6 +1,6 @@
 namespace UnikraftScanner.Client.Symbols;
 
-public enum ConditionalBlockTypes
+public enum CompilationBlockTypes
 {
     IF = 0,
     IFDEF = 1,

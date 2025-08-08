@@ -5,31 +5,53 @@ using Xunit;
 using System.IO;
 using System.Diagnostics;
 using System.Reflection;
-using UnikraftScanner.Client.Helpers;
 using System.Text;
+using Xunit.Abstractions;
 
 public class AssertSymbolEngine : Assert
 {
-    public static void TestSymbolEngineBlockResults(List<CompilationBlock> expected, List<CompilationBlock> actual, bool failAfterFirst = false)
+
+    public static void TestLinesOfCodeInBlocks(List<List<int>> expected, List<List<int>> actual, bool failAfterFirst = false)
     {
         StringBuilder cachedErrorMsg = new();
+
+        if (expected.Count != actual.Count)
+        {
+            cachedErrorMsg.Append($"Comparing lists of lists of code line idxs have different lengths: expected {expected.Count} VS actual {actual.Count}\n");
+
+            Assert.Fail(cachedErrorMsg.ToString());
+        }
+
+
+        for (int i = 0; i < expected.Count; i++)
+        {
+            List<int> e = expected[i];
+            List<int> a = actual[i];
+            TestCustomLists(e, a, $"Test lines of code in block with index {i}");
+        }
+    }
+    public static void TestCustomLists<T>(List<T> expected, List<T> actual, string banner, bool failAfterFirst = false)
+    {
+        StringBuilder cachedErrorMsg = new();
+
+        cachedErrorMsg.Append($"{banner}\n");
 
         if (expected.Count != actual.Count)
         {
             cachedErrorMsg.Append($"Lists have different lengths: expected {expected.Count} VS actual {actual.Count}\n");
 
             cachedErrorMsg.Append("Expected: ");
-            foreach (CompilationBlock eb in expected)
+            foreach (T eb in expected)
             {
-                cachedErrorMsg.Append($"{eb}\n");
+                cachedErrorMsg.Append($"{eb} ");
             }
 
-
+            cachedErrorMsg.Append("\n");
             cachedErrorMsg.Append("Actual: ");
 
-            foreach (CompilationBlock ab in actual)
+            foreach (T ab in actual)
             {
-                cachedErrorMsg.Append($"{ab}\n");
+                cachedErrorMsg.Append($"{ab} ");
             }
             Assert.Fail(cachedErrorMsg.ToString());
         }
@@ -40,7 +62,7 @@ public class AssertSymbolEngine : Assert
             if (!expected[i].Equals(actual[i]))
             {
                 foundError = true;
-                cachedErrorMsg.Append($"Compilation block at index {i} different:\n Expected \n{expected[i]} \n Actual \n{actual[i]}\n");
+                cachedErrorMsg.Append($"Element at index {i} different:\n Expected \n{expected[i]} \n Actual \n{actual[i]}\n");
                 if (failAfterFirst)
                     Assert.Fail(cachedErrorMsg.ToString());
             }
@@ -51,7 +73,7 @@ public class AssertSymbolEngine : Assert
 
     }
 
-    public static void TestUniversalLinesOfCode(int expected, List<int> expectedUniversalLineIdxs,  int actual, List<int> actualUniveralLineIdxs)
+    public static void TestUniversalLinesOfCode(int expected, List<int> expectedUniversalLineIdxs, int actual, List<int> actualUniveralLineIdxs)
     {
 
         if (expected != actual || !expectedUniversalLineIdxs.SequenceEqual(actualUniveralLineIdxs))
@@ -77,24 +99,39 @@ public class PrepSymbolTestEnv : IDisposable
 {
     private string prevPWD;
 
-    public InterceptorOptions Opts { get; init; }
+    private readonly IMessageSink diagnosticMessageSink;
 
-    public PrepSymbolTestEnv()
+    public PluginOptions Opts { get; init; }
+
+    public PrepSymbolTestEnv(IMessageSink diagnosticMessageSink)
     {
 
+        this.diagnosticMessageSink = diagnosticMessageSink;
 
-        // plugin path is hardcoded here and in ./dependencies/prepare.sh
-        Opts = new InterceptorOptions(
-            compilerPath: "/usr/bin/clang++-18",
-            pluginPath: "./dependencies/TestPluginBlockFinder.so",
-            interceptionResFilePath: "./dependencies/results.txt"
+        string unikraftTestsProjectRootPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../..");
+
+        string unikraftClientRootPath = Path.Combine(unikraftTestsProjectRootPath, "../UnikraftScanner.Client");
+
+        Opts = new PluginOptions(
+            compilerPath: "/usr/bin/clang-18",
+            pluginPath: Path.Combine(unikraftTestsProjectRootPath, "Symbols/dependencies/TestPluginBlockFinder.so"),
+            interceptionResFilePath: Path.Combine(unikraftTestsProjectRootPath, "Symbols/dependencies/discovery_results.txt")
         );
 
+        // used for discovery stage when we need to find all blocks, this argument is passed as plugin param when executed
+        Opts.RetainExcludedBlocks_PluginParam = true;
+
         prevPWD = Directory.GetCurrentDirectory();
-        Directory.SetCurrentDirectory(Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/"));
+
+        // compile the plugin from source file found inside the Unikraft Scanner client project
+        Directory.SetCurrentDirectory(
+            Path.Combine(
+                unikraftClientRootPath,
+                "Symbols")
+        );
 
         Process prepareTestEnvironment = new Process();
-        prepareTestEnvironment.StartInfo.FileName = "./dependencies/prepare.sh";
+        prepareTestEnvironment.StartInfo.FileName = "make";
         prepareTestEnvironment.StartInfo.RedirectStandardOutput = true;
         prepareTestEnvironment.StartInfo.RedirectStandardError = true;
 
@@ -103,7 +140,12 @@ public class PrepSymbolTestEnv : IDisposable
         // Console.WriteLine(prepareTestEnvironment.StandardOutput.ReadToEnd());
         Console.WriteLine(prepareTestEnvironment.StandardError.ReadToEnd());
 
-        //prepareTestEnvironment.WaitForExit();
+        // move the plugin library to tests project
+        File.Copy(
+            sourceFileName: Path.Combine(unikraftClientRootPath, "Symbols/bin/BlockFinderPlugin.so"),
+            destFileName: Opts.PluginPath,
+            overwrite: true
+        );
 
     }
 

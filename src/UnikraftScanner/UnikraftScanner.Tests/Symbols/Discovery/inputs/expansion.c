@@ -17,7 +17,7 @@ int main(){
 
 #ifndef B
     n = 2.7182;
-
+    ZZZ(b);
 #elif !defined(C)
     n = 3.14159265;
 #else

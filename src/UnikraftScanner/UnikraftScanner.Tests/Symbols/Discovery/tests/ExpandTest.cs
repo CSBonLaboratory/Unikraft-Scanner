@@ -14,28 +14,28 @@ public class ExpandTest : BaseSymbolTest
     }
 
     [Fact]
-    public void FindCompilationBlocks_Comments_MultiLine_Directives_In_Code()
+    public void FindCompilationBlocks_MacroExpansion_SingleLineCondition_UniversalLinesGaps()
     {
         /*
-        Macro expansion must not be made in order to preserve the correct line and column location of the conditional blocks
+        Macro expansion must not be made in order to preserve the correct line and column location of the Compilation blocks
         */
 
+        string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/Discovery/inputs/expansion.c");
+
         var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
-            Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/inputs/expansion.c"),
+            sourceFileAbsPath,
             opts: SymbolTestEnv.Opts,
-            includesSubCommand: "-I/usr/include"
-            );
+            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath} {DiscoveryStageCommandParser.additionalFlags}"
+        );
 
 
-            
-        var expected = new List<CompilationBlock>{
+        List<CompilationBlock> expected = [
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.IFDEF,
+                    type: CompilationBlockTypes.IFDEF,
                     symbolCondition : "#ifdef A",
                     startLine: 10,
                     startLineEnd: 10,
-                    fakeEndLine: 12,
                     endLine: 12,
                     blockCounter : 0,
                     parentCounter : -1,
@@ -43,11 +43,10 @@ public class ExpandTest : BaseSymbolTest
                     children: null),
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.ELSE,
+                    type: CompilationBlockTypes.ELSE,
                     symbolCondition : "#else",
                     startLine: 12,
                     startLineEnd: 12,
-                    fakeEndLine: 14,
                     endLine: 14,
                     blockCounter : 1,
                     parentCounter : -1,
@@ -55,23 +54,21 @@ public class ExpandTest : BaseSymbolTest
                     children: null),
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.IFNDEF,
+                    type: CompilationBlockTypes.IFNDEF,
                     symbolCondition : "#ifndef B",
                     startLine: 18,
                     startLineEnd: 18,
-                    fakeEndLine: 21,
                     endLine: 21,
                     blockCounter : 2,
                     parentCounter : -1,
-                    lines: 1,
+                    lines: 2,
                     children: null),
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.ELIF,
+                    type: CompilationBlockTypes.ELIF,
                     symbolCondition : "#elif !defined(C)",
                     startLine: 21,
                     startLineEnd: 21,
-                    fakeEndLine: 23,
                     endLine: 23,
                     blockCounter : 3,
                     parentCounter : -1,
@@ -79,21 +76,35 @@ public class ExpandTest : BaseSymbolTest
                     children: null),
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.ELSE,
+                    type: CompilationBlockTypes.ELSE,
                     symbolCondition : "#else",
                     startLine: 23,
                     startLineEnd: 23,
-                    fakeEndLine: 26,
                     endLine: 26,
                     blockCounter : 4,
                     parentCounter : -1,
                     lines: 1,
                     children: null)
-            };
+        ];
 
-        AssertSymbolEngine.TestSymbolEngineBlockResults(expected, actual.Blocks);
+        List<CompilationBlock> actualBlocks = actual.Blocks;
+        AssertSymbolEngine.TestCustomLists<CompilationBlock>(expected, actualBlocks, "Check compilation blocks:");
 
-        // even #define macros are considered lines of code
-        AssertSymbolEngine.TestUniversalLinesOfCode(10, new() { 1, 2, 3, 4, 5, 6, 8, 9, 28, 32 }, actual.UniversalLinesOfCode, actual.debugUniveralLinesOfCodeIdxs);
+        // even #define macros (other directives besides #ifdef, #if, #ifndef, #else, #elif, #endif) and their contents are considered lines of code
+        List<int> expectedUniversalLines = new() { 1, 2, 3, 4, 5, 6, 8, 9, 15, 16, 28, 32 };
+        AssertSymbolEngine.TestUniversalLinesOfCode(expectedUniversalLines.Count, expectedUniversalLines, actual.UniversalLinesOfCode, actual.debugUniveralLinesOfCodeIdxs);
+
+        List<List<int>> expectedCodeLinesInBlocks = [
+
+            [11],
+            [13],
+            [19, 20],
+            [22],
+            [25],
+        ];
+
+        List<List<int>> actualCodeLinesInBlocks = actual.debugLinesOfCodeBlocks;
+
+        AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
     }
 }

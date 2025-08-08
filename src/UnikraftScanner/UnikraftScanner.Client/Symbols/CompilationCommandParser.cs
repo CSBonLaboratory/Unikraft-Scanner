@@ -106,9 +106,9 @@ public class NormalCompilationCommandParser
 
 public class DiscoveryStageCommandParser : NormalCompilationCommandParser
 {
-    
+
     // compilation flags used to ignore #include, #define, #line directives that may interfere with the exact locations of the conditional blocks
-    private static readonly string additionalFlags = "-Wall -Wextra -E -fdirectives-only -dD -P";
+    public const string additionalFlags = "-Wall -Wextra -E -fdirectives-only -dD -P";
     public override BaseParsedCommandResult? ParseCommand(string oDotCmdAbsFilePath)
     {
         BaseParsedCommandResult res = base.ParseCommand(oDotCmdAbsFilePath);

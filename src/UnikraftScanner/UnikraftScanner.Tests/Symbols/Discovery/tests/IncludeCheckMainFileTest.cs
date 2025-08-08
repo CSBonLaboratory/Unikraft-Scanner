@@ -13,25 +13,27 @@ public class IncludeCheckMainFileTest : BaseSymbolTest
     private readonly ITestOutputHelper output;
 
     [Fact]
-    public void FindCompilationBlocks_Comments_MultiLine_Directives_In_Code()
+    public void FindCompilationBlocks_Comments_SingleLine_IncludeHeaderFileWithCompilationBlocks()
     {
         /*
-        Conditional blocks, outside the source file passed inside the clang plugin command, must not be parsed
+        Compilation blocks, outside the source file passed inside the clang plugin command, must not be parsed
         */
+
+        string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/Discovery/inputs/include_check_mainFile.c");
+
         var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
-            Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/inputs/include_check_mainFile.c"),
+            sourceFileAbsPath,
             opts: SymbolTestEnv.Opts,
-            includesSubCommand: "-I/usr/include"
-            );
+            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath} {DiscoveryStageCommandParser.additionalFlags}"
+        );
 
         var expected = new List<CompilationBlock>{
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.IFNDEF,
+                    type: CompilationBlockTypes.IFNDEF,
                     symbolCondition : "#ifndef A",
                     startLine: 6,
                     startLineEnd: 6,
-                    fakeEndLine: 10,
                     endLine: 10,
                     blockCounter : 0,
                     parentCounter : -1,
@@ -39,11 +41,10 @@ public class IncludeCheckMainFileTest : BaseSymbolTest
                     children: null),
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.ELIF,
+                    type: CompilationBlockTypes.ELIF,
                     symbolCondition : "#elif !defined(B)",
                     startLine: 10,
                     startLineEnd: 10,
-                    fakeEndLine: 13,
                     endLine: 13,
                     blockCounter : 1,
                     parentCounter : -1,
@@ -51,11 +52,10 @@ public class IncludeCheckMainFileTest : BaseSymbolTest
                     children: null),
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.ELIF,
+                    type: CompilationBlockTypes.ELIF,
                     symbolCondition : "#elif defined(B)",
                     startLine: 13,
                     startLineEnd: 13,
-                    fakeEndLine: 16,
                     endLine: 16,
                     blockCounter : 2,
                     parentCounter : -1,
@@ -63,13 +63,27 @@ public class IncludeCheckMainFileTest : BaseSymbolTest
                     children: null)
             };
 
-        AssertSymbolEngine.TestSymbolEngineBlockResults(expected, actual.Blocks);
+        List<CompilationBlock> actualBlocks = actual.Blocks;
+        AssertSymbolEngine.TestCustomLists<CompilationBlock>(expected, actualBlocks, "Check compilation blocks:");
 
+        List<int> expectedUniversalLines = new() { 1, 3, 5, 18 };
         AssertSymbolEngine.TestUniversalLinesOfCode(
-            4,
-            new() { 1, 3, 5, 18 },
+            expectedUniversalLines.Count,
+            expectedUniversalLines,
             actual.UniversalLinesOfCode,
             actual.debugUniveralLinesOfCodeIdxs
         );
+
+
+        List<List<int>> expectedCodeLinesInBlocks = [
+            [8],
+            [11],
+            [14]
+        ];
+
+        List<List<int>> actualCodeLinesInBlocks = actual.debugLinesOfCodeBlocks;
+
+        AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
+
     }
 }

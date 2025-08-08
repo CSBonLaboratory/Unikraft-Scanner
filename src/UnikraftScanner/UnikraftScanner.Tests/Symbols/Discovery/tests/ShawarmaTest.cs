@@ -10,149 +10,197 @@ public class ShawarmaTest : BaseSymbolTest
         this.output = output;
     }
     private readonly ITestOutputHelper output;
+    
     [Fact]
-    public void FindCompilationBlocks_AllTypes_WithComments_Nested_Multiline_MixPadding()
+    public void FindCompilationBlocks_Final_AllTypes_WithComments_Nested_Multiline_MixPadding()
     {
 
         /*
             All tests combined. With everything like a shawarma :)
 
+            Includes wrong non-existent header files.
+
             Any non-whitespace line is considered to be a code line and increment the compiled lines number (even #include or #define directives or macro calls etc.)
 
             Comments on the same line as code statements
         */
+        string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/Discovery/inputs/shawarma.c");
         var actual = SymbolEngine
         .GetInstance()
         .FindCompilationBlocksAndLines(
-            Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/inputs/shawarma.c"),
+            sourceFileAbsPath,
             SymbolTestEnv.Opts,
-            includesSubCommand: "-I/usr/include"
+            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath} {DiscoveryStageCommandParser.additionalFlags}"
             );
 
 
         var expected = new List<CompilationBlock>{
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.IF,
-                    symbolCondition: "#if defined(CONFIG_LIB1)",
-                    startLine: 9,
-                    startLineEnd: 9,
-                    fakeEndLine: 17,
-                    endLine: 17,
+                    type: CompilationBlockTypes.IF,
+                    symbolCondition: "#if defined(A)",
+                    startLine: 16,
+                    startLineEnd: 16,
+                    endLine: 73,
                     blockCounter: 0,
                     parentCounter: -1,
                     lines: 1,
-                    children: null),
+                    children: [1, 2]),
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.ELIF,
-                    symbolCondition: "#elif defined(CONFIG_LIB2)",
-                    startLine: 17,
-                    startLineEnd: 17,
-                    fakeEndLine: 44,
-                    endLine: 44,
+                    type: CompilationBlockTypes.IFNDEF,
+                    symbolCondition: "#ifndef ABCDEFGHIJK",
+                    startLine: 18,
+                    startLineEnd: 19,
+                    endLine: 26,
                     blockCounter: 1,
-                    parentCounter: -1,
-                    lines: 1,
-                    children: new List<int>{2, 3, 6}),
-
-                new CompilationBlock(
-                    type: ConditionalBlockTypes.IFNDEF,
-                    symbolCondition: "#ifndef CONFIG_LIB3",
-                    startLine: 20,
-                    startLineEnd: 20,
-                    fakeEndLine: 24,
-                    endLine: 24,
-                    blockCounter: 2,
-                    parentCounter: 1,
-                    lines: 1,
+                    parentCounter: 0,
+                    lines: 4,
                     children: null),
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.ELIF,
-                    symbolCondition: "#elif defined(CONFIG_LIB4)",
-                    startLine: 24,
-                    startLineEnd: 24,
-                    fakeEndLine: 41,
-                    endLine: 41,
-                    blockCounter: 3,
-                    parentCounter: 1,
-                    lines: 3,
-                    children: new List<int>{4}),
+                    type: CompilationBlockTypes.ELSE,
+                    symbolCondition: "#else",
+                    startLine: 26,
+                    startLineEnd: 26,
+                    endLine: 70,
+                    blockCounter: 2,
+                    parentCounter: 0,
+                    lines: 0,
+                    children: [3, 4, 9]),
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.IFDEF,
-                    symbolCondition: "#ifdef CONFIG_LIB4",
+                    type: CompilationBlockTypes.IF,
+                    symbolCondition: "#if defined(A) && defined(B) && (defined(C) && defined(D))",
                     startLine: 27,
-                    startLineEnd: 29,
-                    fakeEndLine: 35,
-                    endLine: 35,
-                    blockCounter: 4,
-                    parentCounter: 3,
-                    lines: 1,
-                    children: new List<int>{5}),
+                    startLineEnd: 31,
+                    endLine: 39,
+                    blockCounter: 3,
+                    parentCounter: 2,
+                    lines: 3,
+                    children: null),
 
-                 new CompilationBlock(
-                    type: ConditionalBlockTypes.IFNDEF,
-                    symbolCondition: "#ifndef CONFIG_LIB5",
-                    startLine: 32,
-                    startLineEnd: 32,
-                    fakeEndLine: 34,
-                    endLine: 34,
+                new CompilationBlock(
+                    type: CompilationBlockTypes.ELIF,
+                    symbolCondition: "#elif defined(E)",
+                    startLine: 39,
+                    startLineEnd: 39,
+                    endLine: 68,
+                    blockCounter: 4,
+                    parentCounter: 2,
+                    lines: 6,
+                    children: [5, 6, 7, 8]),
+
+                new CompilationBlock(
+                    type: CompilationBlockTypes.IF,
+                    symbolCondition: "#if defined(X) || defined(Y)",
+                    startLine: 43,
+                    startLineEnd: 43,
+                    endLine: 46,
                     blockCounter: 5,
                     parentCounter: 4,
                     lines: 1,
-                    children: new List<int>{5}),
+                    children: null),
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.ELSE,
-                    symbolCondition: "#else",
-                    startLine: 41,
-                    startLineEnd: 41,
-                    fakeEndLine: 46,
-                    endLine: 46,
+                    type: CompilationBlockTypes.IF,
+                    symbolCondition: "#if defined(X)",
+                    startLine: 50,
+                    startLineEnd: 50,
+                    endLine: 52,
                     blockCounter: 6,
-                    parentCounter: 1,
+                    parentCounter: 4,
                     lines: 1,
-                    children: new List<int>{7}),
-
-                new CompilationBlock(
-                    type: ConditionalBlockTypes.IFDEF,
-                    symbolCondition: "#ifdef CONFIG_LIB6",
-                    startLine: 42,
-                    startLineEnd: 42,
-                    fakeEndLine: 44,
-                    endLine: 44,
-                    blockCounter: 7,
-                    parentCounter: 6,
-                    lines: 0,
                     children: null),
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.ELIF,
-                    symbolCondition: "#elif defined(CONFIG_LIB7)",
-                    startLine: 47,
-                    startLineEnd: 47,
-                    fakeEndLine: 58,
-                    endLine: 58,
-                    blockCounter: 8,
-                    parentCounter: -1,
-                    lines: 0,
-                    children: new List<int>{9}),
-
-                new CompilationBlock(
-                    type: ConditionalBlockTypes.IFDEF,
-                    symbolCondition: "#ifdef defined(CONFIG_LIB8)",
-                    startLine: 48,
-                    startLineEnd: 48,
-                    fakeEndLine: 57,
+                    type: CompilationBlockTypes.IF,
+                    symbolCondition: "#elif defined(Y)",
+                    startLine: 52,
+                    startLineEnd: 52,
                     endLine: 57,
+                    blockCounter: 7,
+                    parentCounter: 4,
+                    lines: 3,
+                    children: null),
+
+                new CompilationBlock(
+                    type: CompilationBlockTypes.IFNDEF,
+                    symbolCondition: "#ifndef X",
+                    startLine: 61,
+                    startLineEnd: 61,
+                    endLine: 64,
+                    blockCounter: 8,
+                    parentCounter: 4,
+                    lines: 2,
+                    children: null),
+
+                new CompilationBlock(
+                    type: CompilationBlockTypes.ELIF,
+                    symbolCondition: "#elif defined(F)",
+                    startLine: 68,
+                    startLineEnd: 68,
+                    endLine: 69,
                     blockCounter: 9,
-                    parentCounter: 8,
+                    parentCounter: 3,
+                    lines: 0,
+                    children: null),
+
+                new CompilationBlock(
+                    type: CompilationBlockTypes.ELSE,
+                    symbolCondition: "#else",
+                    startLine: 73,
+                    startLineEnd: 73,
+                    endLine: 101,
+                    blockCounter: 10,
+                    parentCounter: -1,
+                    lines: 1,
+                    children: [11]),
+
+                new CompilationBlock(
+                    type: CompilationBlockTypes.IFNDEF,
+                    symbolCondition: "#ifndef ABCDEFGHIJK",
+                    startLine: 92,
+                    startLineEnd: 96,
+                    endLine: 100,
+                    blockCounter: 11,
+                    parentCounter: 10,
                     lines: 1,
                     children: null),
+
 
             };
-            
-        AssertSymbolEngine.TestSymbolEngineBlockResults(expected, actual.Blocks);
+
+        List<CompilationBlock> actualBlocks = actual.Blocks;
+
+        AssertSymbolEngine.TestCustomLists<CompilationBlock>(expected, actualBlocks, "Check compilation blocks:");
+
+
+        List<int> expectedUniversalLines = new() { 1, 2, 11, 12, 13, 104 };
+        AssertSymbolEngine.TestUniversalLinesOfCode(
+            expectedUniversalLines.Count,
+            expectedUniversalLines,
+            actual.UniversalLinesOfCode,
+            actual.debugUniveralLinesOfCodeIdxs
+        );
+
+
+        List<List<int>> expectedCodeLinesInBlocks = [
+            [72], // #if defined(A)
+            [20, 22, 23, 25], // #ifndef ABCDEFGHIJK
+            [], // #else
+            [33, 35, 37], // #if defined(A) && defined(B) && (defined(C) && defined(D))
+            [42, 47, 48, 49, 59, 66], // #elif definded(E)
+            [45],  // #if defined(X) || defined(Y)
+            [51], // #if defined(X)
+            [53, 54, 55], // #elif defined(Y)
+            [62, 63], // #ifndef X
+            [], // #elif defined(F)
+            [77], // #else
+            [99] // #ifndef ABCDEFGHIJK
+        ];
+
+        List<List<int>> actualCodeLinesInBlocks = actual.debugLinesOfCodeBlocks;
+
+        AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
     }
 }

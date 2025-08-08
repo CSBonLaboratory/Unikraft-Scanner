@@ -44,8 +44,8 @@ float graram = 7.65;
 #endif
 x++;
 #if !defined(CONFIG_LIB)
-
 x = 5;
+
     printf("xxxxx");
 x=7;
 #else
@@ -53,8 +53,8 @@ x=4;
 #endif
 
 #ifdef CONFIG_LIB
-    printf("aaaa");
 
+    printf("aaaa");
     
 #endif
 

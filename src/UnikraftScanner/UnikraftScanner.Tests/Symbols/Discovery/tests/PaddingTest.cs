@@ -18,11 +18,11 @@ public class PaddingTest : BaseSymbolTest
         /*
             Preprocessor directives and code statements have mixed paddings and multiline mixed paddings
         */
-
+        string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/Discovery/inputs/padding_allignment.c");
         var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
-            Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/inputs/padding_allignment.c"),
+            sourceFileAbsPath,
             opts: SymbolTestEnv.Opts,
-            includesSubCommand: "-I/usr/include"
+            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath} {DiscoveryStageCommandParser.additionalFlags}"
             );
 
 
@@ -30,11 +30,10 @@ public class PaddingTest : BaseSymbolTest
             
                 // block starts with a padding even though is not nested 
             new CompilationBlock(
-                    type: ConditionalBlockTypes.IFDEF,
+                    type: CompilationBlockTypes.IFDEF,
                     symbolCondition: "#if defined(A)",
                     startLine: 5,
                     startLineEnd: 5,
-                    fakeEndLine: 6,
                     endLine: 6,
                     blockCounter: 0,
                     parentCounter: -1,
@@ -42,11 +41,10 @@ public class PaddingTest : BaseSymbolTest
                     children: null),
 
                 new CompilationBlock(
-                    type: ConditionalBlockTypes.IFDEF,
+                    type: CompilationBlockTypes.IFDEF,
                     symbolCondition: "#ifdef CONFIG_LIB1",
                     startLine: 7,
                     startLineEnd: 7,
-                    fakeEndLine: 13,
                     endLine: 13,
                     blockCounter: 1,
                     parentCounter: -1,
@@ -55,11 +53,10 @@ public class PaddingTest : BaseSymbolTest
 
                     // has ending padding which must be considered
                     new CompilationBlock(
-                    type: ConditionalBlockTypes.ELIF,
+                    type: CompilationBlockTypes.ELIF,
                     symbolCondition: "#elif defined(CONFIG_LIB2)",
                     startLine: 13,
                     startLineEnd: 13,
-                    fakeEndLine: 16,
                     endLine: 16,
                     blockCounter: 2,
                     parentCounter: -1,
@@ -67,11 +64,10 @@ public class PaddingTest : BaseSymbolTest
                     children: null),
 
                     new CompilationBlock(
-                    type: ConditionalBlockTypes.ELSE,
+                    type: CompilationBlockTypes.ELSE,
                     symbolCondition: "#else",
                     startLine: 16,
                     startLineEnd: 16,
-                    fakeEndLine: 19,
                     endLine: 19,
                     blockCounter: 3,
                     parentCounter: -1,
@@ -79,13 +75,26 @@ public class PaddingTest : BaseSymbolTest
                     children: null)
         };
 
-        AssertSymbolEngine.TestSymbolEngineBlockResults(expected, actual.Blocks);
+        List<CompilationBlock> actualBlocks = actual.Blocks;
+        AssertSymbolEngine.TestCustomLists<CompilationBlock>(expected, actualBlocks, "Check compilation blocks:");
 
+        List<int> expectedUniversalLines = new() { 2, 4, 20 };
         AssertSymbolEngine.TestUniversalLinesOfCode(
-            3,
-            new() { 2, 4, 20},
+            expectedUniversalLines.Count,
+            expectedUniversalLines,
             actual.UniversalLinesOfCode,
             actual.debugUniveralLinesOfCodeIdxs
         );
+
+        List<List<int>> expectedCodeLinesInBlocks = [
+            [],
+            [9, 11],
+            [14],
+            [17]
+        ];
+
+        List<List<int>> actualCodeLinesInBlocks = actual.debugLinesOfCodeBlocks;
+
+        AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
     }
 }

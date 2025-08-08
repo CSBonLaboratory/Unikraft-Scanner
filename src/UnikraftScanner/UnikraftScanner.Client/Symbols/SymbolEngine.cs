@@ -53,7 +53,7 @@ public class SymbolEngine
         return commentRegex.Replace(sourceFileRawContent, new MatchEvaluator(ReplaceWithWhiteSpace));
     }
 
-    private static string GetCondition(List<string> rawConditionLines)
+    private static string LexCondition(CompilationBlockTypes directiveType, List<string> rawConditionLines)
     {
         /*
         Symbol conditions of the preprocessor directives have some rules applied to them in this order:
@@ -62,7 +62,7 @@ public class SymbolEngine
         - 2. be put on a single line so we need to remove the last backslash
         - 3. replace multiple whitespaces with only 1 whitespace
         - 4. replace "#     ....." with "#....."
-        - 5. replace "#<whitespace><directive name>" to "#<directive name>"
+        - 5. replace "<whitespace>#<directive name>" to "#<directive name>" so remove begining whitespaces before #
         - 6. remove any whitespaces from the end of string
 
         */
@@ -98,89 +98,109 @@ public class SymbolEngine
             @"\s+$",  // 6
             ""
         );
+
+
+        // used to solve this https://github.com/CSBonLaboratory/Unikraft-Scanner/issues/14#issuecomment-3092380988
+
+        if (directiveType == CompilationBlockTypes.IFDEF || directiveType == CompilationBlockTypes.IFNDEF)
+        {
+            string[] directiveAndSymbol = Regex.Split(ans, @"\s+").Take(2).ToArray();
+
+            return $"{directiveAndSymbol[0]} {directiveAndSymbol[1]}";
+        }
+        
         return ans;
 
     }
 
-    private static void ParseResultsPluginBlock(ref int startLine, ref int startLineEnd, ref int endLine, ref int fakeEndLine, ConditionalBlockTypes directiveType, string[] blockInfoLines, List<string> sourceLines)
+    private static void ParseResultsPluginBlock(ref int startLine, ref int startLineEnd, ref int endLine, CompilationBlockTypes directiveType, string[] blockInfoLines, List<string> sourceLines)
     {
+        // format is <ID NUMBER FOR ANY BLOCK ACCORDING TO CompilationBlockTypes.cs> IF/IFDEF/IFNDEF/ELIF/ELSE/ENDIF <start line> <start column>
+
+        /*
+        Rules:
+        1. No multiline can split inside a directive name
+        Ex:
+        #if\
+        def
+
+        2. No multiline for #endif, if backslash appears just igonore it and further lines are counted as code lines since the plugin also cannot detect multiline endif
+
+        3. multiline for if, ifdef, ifndef, else, elif can be done to split the expression or operands not directive name itself
+
+        4. this method only finds the lines involved in the expressing the entire directive but advanced parsing is done in LexCondition
+        */
 
         startLine = int.Parse(blockInfoLines[0].Split()[2]);
 
-        // format is <ID NUMBER FOR ANY BLOCK ACCORDING TO ConditionalBlockTypes.cs> IF/IFDEF/IFNDEF/ELIF/ELSE/ENDIF <start line> <start column>
-        if (directiveType == ConditionalBlockTypes.IF)
-        {
 
-            startLineEnd = int.Parse(blockInfoLines[2].Split()[1]);
+        // https://github.com/CSBonLaboratory/Unikraft-Scanner/issues/14#issuecomment-3092359691
+        if (!Regex.Replace(sourceLines[startLine], @"#\s+", "#").Contains($"#{directiveType.ToString().ToLower()}"))
+            throw new WrongPreprocessorDirectiveException($"Full name of the directive needs to be placed at line {startLine} for directive {directiveType}");
 
-            // we are not in the state to find the end line of the block, it might be an elif, else or endif
-            endLine = -1;
-
-            // only used for multine #endif
-            fakeEndLine = -1;
-        }
-        else if (new[] { ConditionalBlockTypes.IFDEF, ConditionalBlockTypes.IFNDEF }.Contains(directiveType))
-        {
-
-            startLineEnd = startLine;
-
-            // we are not in the state to find the end line of the block, it might be an elif, else or endif
-            endLine = -1;
-
-            // only used for multine #endif
-            fakeEndLine = -1;
-        }
-
-        else if (directiveType == ConditionalBlockTypes.ELSE)
-        {
-            // #else can be split multiline but the compiler plugin does not show the begin and end lines, so we need to iterate through the lines and find the end
-            // if #else was forbidden from being split in multiline then it whould be treated the same as IFDEF and IFNDEF like in the previous branch
-            if (sourceLines[startLine].Contains('\\'))
+        if (directiveType == CompilationBlockTypes.IF)
             {
-                int i;
-                for (i = startLine + 1; sourceLines[i].Contains('\\'); i++) ;
 
-                startLineEnd = i;
+                startLineEnd = int.Parse(blockInfoLines[2].Split()[1]);
+
+                // we are not in the state to find the end line of the block, it might be an elif, else or endif
+                endLine = -1;
             }
-            else
+            else if (new[] { CompilationBlockTypes.IFDEF, CompilationBlockTypes.IFNDEF }.Contains(directiveType))
+            {
+                // the plugin does not show the StartEndLine where the whole multiline expression ends thus we increment the line until we dont find any backslash
+                // however keep in mind https://github.com/CSBonLaboratory/Unikraft-Scanner/issues/14#issuecomment-3092380988
+                // backslash cannot split through directive name or add multiple symbols for IFDEF and IFNDEF
+                // further processing is done in LexCondition
+                if (sourceLines[startLine].Contains('\\'))
+                {
+                    int i;
+                    for (i = startLine + 1; sourceLines[i].Contains('\\'); i++) ;
+
+                    startLineEnd = i;
+                }
+                else
+                    startLineEnd = startLine;
+
+                // we are not in the state to find the end line of the block, it might be an elif, else or endif
+                endLine = -1;
+            }
+
+            // in order to solve https://github.com/CSBonLaboratory/Unikraft-Scanner/issues/14#issuecomment-3094635526
+            else if (directiveType == CompilationBlockTypes.ELSE)
+            {
                 startLineEnd = startLine;
 
-            // we are not in the state to find the end line of the block, it might be an elif, else or endif
-            endLine = -1;
+                // we are not in the state to find the end line of the block, it might be an elif, else or endif
+                endLine = -1;
+            }
 
-            // only used for multine #endif
-            fakeEndLine = -1;
-        }
-        else if (directiveType == ConditionalBlockTypes.ELIF)
-        {
+            else if (directiveType == CompilationBlockTypes.ELIF)
+            {
+                // very similar to #if
+                startLineEnd = int.Parse(blockInfoLines[3].Split()[1]);
 
-            startLineEnd = int.Parse(blockInfoLines[3].Split()[1]);
+                // we are not in the state to find the end line of the block, it might be an elif, else or endif
+                endLine = -1;
+            }
+            else if (directiveType == CompilationBlockTypes.ENDIF)
+            {
+                // start line and startLineEnd are populated by the first incomplete block from the stack that ends at this endif
+                startLine = -1;
+                startLineEnd = -1;
 
-            // we are not in the state to find the end line of the block, it might be an elif, else or endif
-            endLine = -1;
+                // endif is not multiline
+                // if backslash occurs just igore it and other lines after endif are counted as code line
+                endLine = int.Parse(blockInfoLines[0].Split()[2]);
 
-            // only used for multine #endif
-            fakeEndLine = -1;
+            }
+            else
+            {
+                throw new InvalidOperationException($" UNKNOWN DIRECTIVE TYPE: {directiveType}");
+            }
 
-        }
-        else if (directiveType == ConditionalBlockTypes.ENDIF)
-        {
-            // start line and startLineEnd are populated by the first incomplete block from the stack that ends at this endif
-            startLine = -1;
-            startLineEnd = -1;
-
-
-            fakeEndLine = int.Parse(blockInfoLines[0].Split()[2]);
-
-            int i;
-            for (i = fakeEndLine; sourceLines[i].Contains('\\'); i++) ;
-
-            endLine = i;
-        }
-        else
-        {
-            throw new Exception($" UNKNOWN DIRECTIVE TYPE: {directiveType}");
-        }
+        
+            
 
     }
 
@@ -199,7 +219,7 @@ public class SymbolEngine
             return foundC;
         }
 
-        // corner case when we dont have embbeded compilation blocks
+        // corner case when we dont have any compilation blocks conditioned by preprocessor directives
         if (this.orphanBlocksCounterCache.Count == 0)
         {
             // dont forget ! we start from 1 because we also add a new line so that startLine/endLine should start at 1 like many IDEs
@@ -216,12 +236,11 @@ public class SymbolEngine
     
         // add a fake compilation block that represents the whole source file
         CompilationBlock fakeWholeSourceRootBlock = new CompilationBlock(
-            type: ConditionalBlockTypes.ROOT,
+            type: CompilationBlockTypes.ROOT,
             symbolCondition: "",
             startLine: 0,
             blockCounter: -1,
             startLineEnd: 0,
-            fakeEndLine: sourceLines.Count,
             endLine: sourceLines.Count,
             parentCounter: -1,
             lines: 0,
@@ -237,7 +256,7 @@ public class SymbolEngine
             // if block does not have any embeded blocks just iterate through start-end
             if (currentBlock.Children == null || currentBlock.Children.Count == 0)
             {
-                for (int i = currentBlock.StartLineEnd + 1; i < currentBlock.FakeEndLine; i++)
+                for (int i = currentBlock.StartLineEnd + 1; i < currentBlock.EndLine; i++)
                 {
                     if (FastFindCodeLine(sourceLines[i]))
                     {
@@ -247,8 +266,9 @@ public class SymbolEngine
 #if TEST_SYMBOL_CODE_LINES
                         if (currentBlock.Equals(fakeWholeSourceRootBlock))
                             debugUniversalLineIdxs.Add(i);
-                        else
+                        else{
                             debugLinesOfCodeBlocks[currentBlock.BlockCounter].Add(i);
+                        }
 #endif
 
                     }
@@ -297,7 +317,7 @@ public class SymbolEngine
                             if (currentBlock.Equals(fakeWholeSourceRootBlock))
                                 debugUniversalLineIdxs.Add(j);
                             else
-                                debugLinesOfCodeBlocks[currentBlock.BlockCounter].Add(i);
+                                debugLinesOfCodeBlocks[currentBlock.BlockCounter].Add(j);
 #endif
                         }
                     }
@@ -307,7 +327,7 @@ public class SymbolEngine
                 CompilationBlock lastChild = foundBlocks[currentBlock.Children.Last() + 1];
 
                 // lines after last child
-                for (int i = lastChild.EndLine + 1; i < currentBlock.FakeEndLine; i++)
+                for (int i = lastChild.EndLine + 1; i < currentBlock.EndLine; i++)
                 {
                     if (FastFindCodeLine(sourceLines[i]))
                     {
@@ -330,7 +350,7 @@ public class SymbolEngine
         foundBlocks.RemoveAt(0);
     }
 
-    public EngineResult FindCompilationBlocksAndLines(string sourceFileAbsPath, PluginOptions opts, string targetCompilationCommand)
+    public EngineResult? FindCompilationBlocksAndLines(string sourceFileAbsPath, PluginOptions opts, string targetCompilationCommand)
     {
 
         List<CompilationBlock> foundBlocks = new();
@@ -341,39 +361,43 @@ public class SymbolEngine
         // remove comments before executing the compiler in order to not count them as code lines
         List<string> sourceLines = RemoveComments(File.ReadAllText(sourceFileAbsPath)).Split("\n").ToList();
 
-        // the decision of using the compiler in Discovery stage (first passing) or in Triggering stage (second passing) is done outside SymbolEngine
-        string[] rawBlocks = new CompilerPlugin(targetCompilationCommand, opts).ExecutePlugin();
+        // the decision of using the compiler in Discovery stage (first passing) or in Triggering stage (second passing) is done outside SymbolEngine 
+        // in the CompilerOptions
+        string[]? rawBlocks = new CompilerPlugin(targetCompilationCommand, opts).ExecutePlugin();
+
+        // the source file has compilation errors
+        if (rawBlocks == null)
+            return null;
 
         // we just add a blank line so that line indexes start from 1 just to match line numbers counted by the plugin (most IDEs count lines starting from 1)
         sourceLines.Insert(0, "");
 
         Stack<CompilationBlock> openedBlocks = new();
 
-        int startLine = -1, startLineEnd = -1, endLine = -1, parentCounter = -1, blockCounter = 0, fakeEndLine = -1;
+        int startLine = -1, startLineEnd = -1, endLine = -1, parentCounter = -1, blockCounter = 0;
 
         foreach (string block in rawBlocks)
         {
             // each info line in each block is on a particular line
             string[] blockInfoLines = block.Split("\n");
 
-            ConditionalBlockTypes directiveType = (ConditionalBlockTypes)int.Parse(blockInfoLines[0].Split()[0]);
+            CompilationBlockTypes directiveType = (CompilationBlockTypes)int.Parse(blockInfoLines[0].Split()[0]);
 
             // reset parent counter
             parentCounter = -1;
 
-            ParseResultsPluginBlock(ref startLine, ref startLineEnd, ref endLine, ref fakeEndLine, directiveType, blockInfoLines, sourceLines);
+            ParseResultsPluginBlock(ref startLine, ref startLineEnd, ref endLine, directiveType, blockInfoLines, sourceLines);
 
-            if (directiveType == ConditionalBlockTypes.ENDIF)
+            if (directiveType == CompilationBlockTypes.ENDIF)
             {
 
                 CompilationBlock endingBlock = openedBlocks.Pop();
 
-                endingBlock.FakeEndLine = fakeEndLine;
                 endingBlock.EndLine = endLine;
 
                 foundBlocks.Add(endingBlock);
             }
-            else if (new[] { ConditionalBlockTypes.IF, ConditionalBlockTypes.IFDEF, ConditionalBlockTypes.IFNDEF }.Contains(directiveType))
+            else if (new[] { CompilationBlockTypes.IF, CompilationBlockTypes.IFDEF, CompilationBlockTypes.IFNDEF }.Contains(directiveType))
             {
 
                 // see if current block has a parent and then link each other
@@ -393,12 +417,11 @@ public class SymbolEngine
 
                 CompilationBlock currentBlock = new CompilationBlock(
                     type: directiveType,
-                    condition: GetCondition(sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
+                    condition: LexCondition(directiveType, sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
                     startLine: startLine,
                     blockCounter: blockCounter,
                     startLineEnd: startLineEnd,
                     // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
-                    fakeEndLine: -1,
                     endLine: -1,
                     parentCounter: parentCounter);
 
@@ -413,13 +436,12 @@ public class SymbolEngine
                 blockCounter++;
 
             }
-            else if (new[] { ConditionalBlockTypes.ELIF, ConditionalBlockTypes.ELSE }.Contains(directiveType))
+            else if (new[] { CompilationBlockTypes.ELIF, CompilationBlockTypes.ELSE }.Contains(directiveType))
             {
 
                 // finalize processing previous branch block (a previous elif, if, ifndef, ifdef)
                 CompilationBlock siblingBlock = openedBlocks.Pop();
-                // fake end line only used when closing a block with an #endif
-                siblingBlock.FakeEndLine = startLine;
+               
                 siblingBlock.EndLine = startLine;
                 foundBlocks.Add(siblingBlock);
 
@@ -438,12 +460,11 @@ public class SymbolEngine
 
                 CompilationBlock currentBlock = new CompilationBlock(
                     type: directiveType,
-                    GetCondition(sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
+                    LexCondition(directiveType, sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
                     startLine: startLine,
                     blockCounter: blockCounter,
                     startLineEnd: startLineEnd,
                     // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
-                    fakeEndLine: -1,
                     endLine: -1,
                     parentCounter: parentCounter
                 );
@@ -466,28 +487,23 @@ public class SymbolEngine
         int universalLinesOfCode = 0;
 
         List<int> debugUniversalLinesOfCodeIdxs = new();
-        List<List<int>> debugLinesOfCodeBlocks = Enumerable.Repeat(new List<int>(), foundBlocks.Count).ToList();
+        List<List<int>> debugLinesOfCodeBlocks = new(foundBlocks.Count);
+        for (int i = 0; i < foundBlocks.Count; i++) {
+            debugLinesOfCodeBlocks.Add(new List<int>());
+        }
 
         CountLinesOfCodeInSourceFile(sourceLines, foundBlocks, ref universalLinesOfCode, debugUniversalLinesOfCodeIdxs, debugLinesOfCodeBlocks);
 
         return new EngineResult(foundBlocks, universalLinesOfCode, debugUniversalLinesOfCodeIdxs, debugLinesOfCodeBlocks);
     }
 
+
     public static void Main(string[] args)
     {
-        PluginOptions Opts = new PluginOptions(
-            compilerPath: "/usr/bin/clang-18",
-            pluginPath: "/home/karakitay/Desktop/Unikraft-Scanner/src/UnikraftScanner/UnikraftScanner.Tests/Symbols/dependencies/TestPluginBlockFinder.so",
-            interceptionResFilePath: "/home/karakitay/Desktop/Unikraft-Scanner/src/UnikraftScanner/UnikraftScanner.Tests/Symbols/dependencies/results.txt"
-        );
+        // int[,] x = new int[4, 5];
 
-        var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
-            "/home/karakitay/Desktop/Unikraft-Scanner/src/UnikraftScanner/UnikraftScanner.Tests/Symbols/Discovery/inputs/simple_else.c",
-            opts: Opts,
-            targetCompilationCommand: $"{Opts.CompilerPath} -I/usr/include -c  /home/karakitay/Desktop/Unikraft-Scanner/src/UnikraftScanner/UnikraftScanner.Tests/Symbols/Discovery/inputs/simple_else.c {DiscoveryStageCommandParser.additionalFlags}"
-        );
-
-
+        // string[] y = args[1..1];
+        // Dictionary<int[,], bool> d = new();
     }
 
 
