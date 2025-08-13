@@ -5,7 +5,10 @@ public class PluginOptions
     public string CompilerPath {get; init;}
     public string PluginPath {get; init;}
     public string InterceptionResultsFilePath_PluginParam {get; init;}
-    public bool? RetainExcludedBlocks_PluginParam { get; set;}
+
+    // TRUE means Discovery Stage
+    // FALSE means Trigger Stage
+    public bool? RetainExcludedBlocks_PluginParam { get; set; }
 
     public PluginOptions(
         string compilerPath,
