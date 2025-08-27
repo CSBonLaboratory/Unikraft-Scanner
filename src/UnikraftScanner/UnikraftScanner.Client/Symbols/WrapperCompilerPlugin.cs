@@ -1,6 +1,21 @@
 ﻿namespace UnikraftScanner.Client.Symbols;
 using System.IO;
 using System.Diagnostics;
+using UnikraftScanner.Client.Helpers;
+
+public enum PluginStage
+{
+    Discovery,
+    Trigger
+}
+
+public record PluginOptions(
+    string CompilerPath,
+    string PluginPath,
+    string InterceptionResultsFilePath_External_PluginParam,
+    PluginStage Stage_RetainExcludedBlocks_Internal_PluginParam
+    );
+
 
 // Wrapper class that passes arguments and controls the C++ Clang plugin
 internal class CompilerPlugin
@@ -33,13 +48,13 @@ internal class CompilerPlugin
 
         // // pass where to put results about intercepted plugin blocks after plugin execution
         _plugin.Arguments += $" -Xclang -plugin-arg-ConditionalBlockFinder";
-        _plugin.Arguments += $" -Xclang {opts.InterceptionResultsFilePath_PluginParam}";
+        _plugin.Arguments += $" -Xclang {opts.InterceptionResultsFilePath_External_PluginParam}";
 
         // // should plugin parse conditional blocks inside a block that was evaluated as false
         // // for now, do not exclude them since we need to find all conditional blocks
-        // // we will exclude them at the second stage when we need to find which ones are compiled (evaluated to true)
+        // // we will exclude them at the second stage when we need to find which ones are compiled
         _plugin.Arguments += $" -Xclang -plugin-arg-ConditionalBlockFinder";
-        _plugin.Arguments += $" -Xclang {opts.RetainExcludedBlocks_PluginParam}";
+        _plugin.Arguments += $" -Xclang {opts.Stage_RetainExcludedBlocks_Internal_PluginParam}";
 
         Console.WriteLine(_plugin.Arguments);
         _plugin.CreateNoWindow = true;
@@ -49,9 +64,10 @@ internal class CompilerPlugin
         _plugin.UseShellExecute = false;
 
     }
-    
-    public string[]? ExecutePlugin()
+
+    public ResultUnikraftScanner<string[]> ExecutePlugin()
     {
+
         var generalInterceptor = Process.Start(_plugin);
 
         string interceptOut = generalInterceptor.StandardOutput.ReadToEnd();
@@ -60,11 +76,23 @@ internal class CompilerPlugin
         generalInterceptor.WaitForExit();
 
         if (generalInterceptor.ExitCode != 0)
-            return null;
+        {
+            return ResultUnikraftScanner<string[]>.Failure(
 
-        string pluginResults = File.ReadAllText(_opts.InterceptionResultsFilePath_PluginParam);
+                new ErrorUnikraftScanner<string>(
+                    $"Plugin execution failed with exit code {generalInterceptor.ExitCode}",
+                    ErrorTypes.CompilationInPluginFailure
+                )
+            );
+        }
+
+        string pluginResults = File.ReadAllText(_opts.InterceptionResultsFilePath_External_PluginParam);
+
+        // no compilation blocks, so all code will be compiled no matter what
+        if (pluginResults.Length == 0)
+            return (ResultUnikraftScanner<string[]>)Array.Empty<string>();
 
         // blocks are split by an empty line
-        return pluginResults.Split("\n\n").Where(e => e != "").ToArray();
+        return (ResultUnikraftScanner<string[]>)pluginResults.Split("\n\n").Where(e => e != "").ToArray();
     }
 }

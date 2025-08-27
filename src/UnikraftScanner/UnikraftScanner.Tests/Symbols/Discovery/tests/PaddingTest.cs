@@ -12,6 +12,7 @@ public class PaddingTest : BaseSymbolTest
     private readonly ITestOutputHelper output;
 
     [Fact]
+    [Trait("Category", "DiscoveryStage")]
     public void FindCompilationBlocks_AllTypes_NoComments_NoNested_MultiLiners_MixPadding()
     {
 
@@ -19,12 +20,18 @@ public class PaddingTest : BaseSymbolTest
             Preprocessor directives and code statements have mixed paddings and multiline mixed paddings
         */
         string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/Discovery/inputs/padding_allignment.c");
-        var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
+        var actualResult = new SymbolEngine().DiscoverCompilationBlocksAndLines(
             sourceFileAbsPath,
             opts: SymbolTestEnv.Opts,
-            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath} {DiscoveryStageCommandParser.additionalFlags}"
+            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath}"
             );
 
+        if (!actualResult.IsSuccess)
+        {
+            Assert.Fail(((ErrorUnikraftScanner<string>)actualResult.Error).Data);
+        }
+
+        SymbolEngine.EngineDTO actual = actualResult.Value;
 
         var expected = new List<CompilationBlock>{
             
@@ -76,16 +83,7 @@ public class PaddingTest : BaseSymbolTest
         };
 
         List<CompilationBlock> actualBlocks = actual.Blocks;
-        AssertSymbolEngine.TestCustomLists<CompilationBlock>(expected, actualBlocks, "Check compilation blocks:");
-
-        List<int> expectedUniversalLines = new() { 2, 4, 20 };
-        AssertSymbolEngine.TestUniversalLinesOfCode(
-            expectedUniversalLines.Count,
-            expectedUniversalLines,
-            actual.UniversalLinesOfCode,
-            actual.debugUniveralLinesOfCodeIdxs
-        );
-
+        
         List<List<int>> expectedCodeLinesInBlocks = [
             [],
             [9, 11],
@@ -94,6 +92,24 @@ public class PaddingTest : BaseSymbolTest
         ];
 
         List<List<int>> actualCodeLinesInBlocks = actual.debugLinesOfCodeBlocks;
+
+        List<int> expectedUniversalLines = new() { 2, 4, 20 };
+
+        AssertSymbolEngine.TestCustomLists<CompilationBlock>(
+            expected,
+            actualBlocks,
+            "Check compilation blocks:",
+            expectedCodeLinesInBlocks,
+            actualCodeLinesInBlocks
+        );
+
+        
+        AssertSymbolEngine.TestUniversalLinesOfCode(
+            expectedUniversalLines,
+            actual.debugUniveralLinesOfCodeIdxs
+        );
+
+        
 
         AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
     }

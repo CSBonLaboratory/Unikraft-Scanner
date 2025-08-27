@@ -14,6 +14,7 @@ public class ExpandTest : BaseSymbolTest
     }
 
     [Fact]
+    [Trait("Category", "DiscoveryStage")]
     public void FindCompilationBlocks_MacroExpansion_SingleLineCondition_UniversalLinesGaps()
     {
         /*
@@ -22,12 +23,18 @@ public class ExpandTest : BaseSymbolTest
 
         string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/Discovery/inputs/expansion.c");
 
-        var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
+        var actualResult = new SymbolEngine().DiscoverCompilationBlocksAndLines(
             sourceFileAbsPath,
             opts: SymbolTestEnv.Opts,
-            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath} {DiscoveryStageCommandParser.additionalFlags}"
+            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath}"
         );
 
+        if (!actualResult.IsSuccess)
+        {
+            Assert.Fail(((ErrorUnikraftScanner<string>)actualResult.Error).Data);
+        }
+
+        SymbolEngine.EngineDTO actual = actualResult.Value;
 
         List<CompilationBlock> expected = [
 
@@ -88,11 +95,6 @@ public class ExpandTest : BaseSymbolTest
         ];
 
         List<CompilationBlock> actualBlocks = actual.Blocks;
-        AssertSymbolEngine.TestCustomLists<CompilationBlock>(expected, actualBlocks, "Check compilation blocks:");
-
-        // even #define macros (other directives besides #ifdef, #if, #ifndef, #else, #elif, #endif) and their contents are considered lines of code
-        List<int> expectedUniversalLines = new() { 1, 2, 3, 4, 5, 6, 8, 9, 15, 16, 28, 32 };
-        AssertSymbolEngine.TestUniversalLinesOfCode(expectedUniversalLines.Count, expectedUniversalLines, actual.UniversalLinesOfCode, actual.debugUniveralLinesOfCodeIdxs);
 
         List<List<int>> expectedCodeLinesInBlocks = [
 
@@ -104,6 +106,22 @@ public class ExpandTest : BaseSymbolTest
         ];
 
         List<List<int>> actualCodeLinesInBlocks = actual.debugLinesOfCodeBlocks;
+
+        // even #define macros (other directives besides #ifdef, #if, #ifndef, #else, #elif, #endif) and their contents are considered lines of code
+        List<int> expectedUniversalLines = new() { 1, 2, 3, 4, 5, 6, 8, 9, 15, 16, 28, 32 };
+
+        AssertSymbolEngine.TestCustomLists<CompilationBlock>(
+            expected,
+            actualBlocks,
+            "Check compilation blocks:",
+            expectedCodeLinesInBlocks,
+            actualCodeLinesInBlocks
+        );
+
+        AssertSymbolEngine.TestUniversalLinesOfCode(
+            expectedUniversalLines,
+            actual.debugUniveralLinesOfCodeIdxs
+        );
 
         AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
     }

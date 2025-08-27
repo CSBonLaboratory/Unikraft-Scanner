@@ -65,15 +65,15 @@ public:
             switch (ConditionValue)
             {
             case CVK_NotEvaluated:
-                resultStream<<"CVK_NotEvaluated\n";
+                resultStream<<"EVAL NotEvaluated\n";
                 break;
             
             case CVK_False:
-                resultStream<<"CVK_False\n";
+                resultStream<<"EVAL False\n";
                 break;
 
             case CVK_True:
-                resultStream<<"CVK_True\n";
+                resultStream<<"EVAL True\n";
                 break;
             default:
                 resultStream<<"Undefined\n";   
@@ -131,18 +131,18 @@ public:
             switch (ConditionValue)
             {
             case CVK_NotEvaluated:
-                resultStream << "CVK_NotEvaluated\n";
+                resultStream << "EVAL NotEvaluated\n";
                 break;
             
             case CVK_False:
-                resultStream << "CVK_False\n";
+                resultStream << "EVAL False\n";
                 break;
 
             case CVK_True:
-                resultStream << "CVK_True\n";
+                resultStream << "EVAL True\n";
                 break;
             default:
-                resultStream << "Undefined\n";   
+                resultStream << "Undefined\n";
                 break;
             }
 
@@ -217,22 +217,15 @@ public:
 
             std::string retainOpt(args[1]);
 
-            std::transform(retainOpt.begin(), retainOpt.end(), retainOpt.begin(), [](unsigned char c){ return std::tolower(c); });
-
-            if(retainOpt.compare("true") == 0)
+            if(retainOpt.compare("Discovery") == 0)
                 retainExcluded = true;
             else
                 retainExcluded = false;
             return true;
         }
-        else if(args.size() == 1){
-            resultFilePath = std::string(args[0]);
-            retainExcluded = false;
-            return true;
-        }
         std::cerr<<"Usage: clang++<optional version> -I/usr/include <c file to parse> -Wextra -E -fdirectives-only -P\
         -Xclang -load -Xclang <path to .so library plugin> -Xclang -plugin -Xclang <name of plugin - see FrontendPluginRegistry>\
-        -Xclang -plugin-arg-Order <plugin to file that will contain results from running this plugin>\n optional[true/FALSE]<if you want to parse blocks that normally are not considered by compiler>";
+        -Xclang -plugin-arg-Order <plugin to file that will contain results from running this plugin>\n <Discovery/Trigger> (execution modes for the plugin - see WrapperCompilerPlugin.cs)";
         return false;
     }
 

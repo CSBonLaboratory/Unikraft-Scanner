@@ -16,6 +16,7 @@ public class CompilationErrorTest : BaseSymbolTest
     }
 
     [Theory]
+    [Trait("Category", "DiscoveryStage")]
     [InlineData("wrong_compilation_error.c")]
     [InlineData("wrong_multiline_backslash_split_elif.c")]
     [InlineData("wrong_multiline_backslash_split_else.c")]
@@ -40,27 +41,21 @@ public class CompilationErrorTest : BaseSymbolTest
 
         string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), $"../../../Symbols/Discovery/inputs/{testNameFile}");
 
-        try
-        {
-            var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
-                sourceFileAbsPath,
-                opts: SymbolTestEnv.Opts,
-                targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath} {DiscoveryStageCommandParser.additionalFlags}"
-            );
-
-            Assert.Null(actual);
-
-        }
-        catch (WrongPreprocessorDirectiveException)
-        {
-            
-        }
-        catch (Exception oops)
-        {
-            Assert.Fail($"Unexpected crash:\n {oops.Message}");
-        }
-
         
+        var actual = new SymbolEngine().DiscoverCompilationBlocksAndLines(
+            sourceFileAbsPath,
+            opts: SymbolTestEnv.Opts,
+            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath}"
+        );
+
+        if (actual.IsSuccess)
+        {
+            Assert.Fail("Test must have expected failed result but actual value has succeeded");
+        }
+        else if (actual.Error.GetErrorType() != ErrorTypes.WrongPreprocessorDirective)
+        {
+            Assert.Fail($"Test failed but error is not {ErrorTypes.WrongPreprocessorDirective} but {actual.Error.GetErrorType()}");
+        }
 
     }
 }

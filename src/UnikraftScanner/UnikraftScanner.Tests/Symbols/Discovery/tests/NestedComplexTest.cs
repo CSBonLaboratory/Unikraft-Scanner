@@ -11,7 +11,9 @@ public class NestedComplexTest : BaseSymbolTest
         this.output = output;
     }
     private readonly ITestOutputHelper output;
+    
     [Fact]
+    [Trait("Category", "DiscoveryStage")]
     public void FindCompilationBlocks_Nested_Complex_SpaceBetweenHashtagAndDirective()
     {
 
@@ -22,12 +24,18 @@ public class NestedComplexTest : BaseSymbolTest
         */
 
         string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/Discovery/inputs/nested_complex.c");
-        var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
+        var actualResult = new SymbolEngine().DiscoverCompilationBlocksAndLines(
             sourceFileAbsPath,
             opts: SymbolTestEnv.Opts,
-            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath} {DiscoveryStageCommandParser.additionalFlags}"
+            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath}"
             );
+        
+        if (!actualResult.IsSuccess)
+        {
+            Assert.Fail(((ErrorUnikraftScanner<string>)actualResult.Error).Data);
+        }
 
+        SymbolEngine.EngineDTO actual = actualResult.Value;
 
         var expected = new List<CompilationBlock>{
                 new CompilationBlock(
@@ -230,14 +238,25 @@ public class NestedComplexTest : BaseSymbolTest
             };
 
         List<CompilationBlock> actualBlocks = actual.Blocks;
-        AssertSymbolEngine.TestCustomLists<CompilationBlock>(expected, actualBlocks, "Check compilation blocks:");
-
-        List<int> expectedUniversalLines = new() { 1, 40 };
-        AssertSymbolEngine.TestUniversalLinesOfCode(expectedUniversalLines.Count, expectedUniversalLines, actual.UniversalLinesOfCode, actual.debugUniveralLinesOfCodeIdxs);
-
+        
         List<List<int>> expectedCodeLinesInBlocks = Enumerable.Repeat(new List<int>(), expected.Count).ToList();
 
         List<List<int>> actualCodeLinesInBlocks = actual.debugLinesOfCodeBlocks;
+
+        List<int> expectedUniversalLines = new() { 1, 40 };
+
+        AssertSymbolEngine.TestCustomLists<CompilationBlock>(
+            expected,
+            actualBlocks,
+            "Check compilation blocks:",
+            expectedCodeLinesInBlocks,
+            actualCodeLinesInBlocks
+        );
+
+        AssertSymbolEngine.TestUniversalLinesOfCode(
+            expectedUniversalLines,
+            actual.debugUniveralLinesOfCodeIdxs
+        );
 
         AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
     }

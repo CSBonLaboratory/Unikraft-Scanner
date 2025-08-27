@@ -1,0 +1,1 @@
+""gcc -fake-flag-DSYMBOL --D SYMBOL1 -c /home/haproxy/main.c -fake-flag-USYMBOL -o ./main.o --U SYMBOL1

@@ -10,11 +10,11 @@ public class ShawarmaTest : BaseSymbolTest
         this.output = output;
     }
     private readonly ITestOutputHelper output;
-    
+
     [Fact]
+    [Trait("Category", "DiscoveryStage")]
     public void FindCompilationBlocks_Final_AllTypes_WithComments_Nested_Multiline_MixPadding()
     {
-
         /*
             All tests combined. With everything like a shawarma :)
 
@@ -25,14 +25,19 @@ public class ShawarmaTest : BaseSymbolTest
             Comments on the same line as code statements
         */
         string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/Discovery/inputs/shawarma.c");
-        var actual = SymbolEngine
-        .GetInstance()
-        .FindCompilationBlocksAndLines(
+        var actualResult = new SymbolEngine()
+        .DiscoverCompilationBlocksAndLines(
             sourceFileAbsPath,
             SymbolTestEnv.Opts,
-            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath} {DiscoveryStageCommandParser.additionalFlags}"
+            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath}"
             );
 
+        if (!actualResult.IsSuccess)
+        {
+            Assert.Fail(((ErrorUnikraftScanner<string>)actualResult.Error).Data);
+        }
+
+        SymbolEngine.EngineDTO actual = actualResult.Value;
 
         var expected = new List<CompilationBlock>{
                 new CompilationBlock(
@@ -170,20 +175,6 @@ public class ShawarmaTest : BaseSymbolTest
 
             };
 
-        List<CompilationBlock> actualBlocks = actual.Blocks;
-
-        AssertSymbolEngine.TestCustomLists<CompilationBlock>(expected, actualBlocks, "Check compilation blocks:");
-
-
-        List<int> expectedUniversalLines = new() { 1, 2, 11, 12, 13, 104 };
-        AssertSymbolEngine.TestUniversalLinesOfCode(
-            expectedUniversalLines.Count,
-            expectedUniversalLines,
-            actual.UniversalLinesOfCode,
-            actual.debugUniveralLinesOfCodeIdxs
-        );
-
-
         List<List<int>> expectedCodeLinesInBlocks = [
             [72], // #if defined(A)
             [20, 22, 23, 25], // #ifndef ABCDEFGHIJK
@@ -199,7 +190,26 @@ public class ShawarmaTest : BaseSymbolTest
             [99] // #ifndef ABCDEFGHIJK
         ];
 
+        List<int> expectedUniversalLines = new() { 1, 2, 11, 12, 13, 104 };
+
         List<List<int>> actualCodeLinesInBlocks = actual.debugLinesOfCodeBlocks;
+        List<CompilationBlock> actualBlocks = actual.Blocks;
+
+        AssertSymbolEngine.TestCustomLists<CompilationBlock>(
+            expected,
+            actualBlocks,
+            "Check compilation blocks",
+            expectedCodeLinesInBlocks,
+            actualCodeLinesInBlocks
+        );
+
+        
+        AssertSymbolEngine.TestUniversalLinesOfCode(
+            expectedUniversalLines,
+            actual.debugUniveralLinesOfCodeIdxs
+        );
+
+        
 
         AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
     }

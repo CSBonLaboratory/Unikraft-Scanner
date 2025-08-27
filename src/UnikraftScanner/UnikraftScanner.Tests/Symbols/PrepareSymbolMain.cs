@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using Xunit.Abstractions;
+using UnikraftScanner.Client.Symbols;
 
 public class AssertSymbolEngine : Assert
 {
@@ -22,15 +23,21 @@ public class AssertSymbolEngine : Assert
             Assert.Fail(cachedErrorMsg.ToString());
         }
 
-
         for (int i = 0; i < expected.Count; i++)
         {
             List<int> e = expected[i];
             List<int> a = actual[i];
-            TestCustomLists(e, a, $"Test lines of code in block with index {i}");
+            TestCustomLists(e, a, $"Test lines of code in block with index {i}", null, null);
         }
     }
-    public static void TestCustomLists<T>(List<T> expected, List<T> actual, string banner, bool failAfterFirst = false)
+    public static void TestCustomLists<T>(
+        List<T> expected,
+        List<T> actual,
+        string banner,
+        List<List<int>>? debugExpectedLoC, // used when comparing compilation blocks
+        List<List<int>>? debugActualLoC, // used when comparing compilation blocks
+        bool failAfterFirst = false
+        )
     {
         StringBuilder cachedErrorMsg = new();
 
@@ -61,10 +68,25 @@ public class AssertSymbolEngine : Assert
         {
             if (!expected[i].Equals(actual[i]))
             {
+
+                cachedErrorMsg.Append($"Expected code line indexes for block index {i}: ");
+                foreach (int eLoC in debugExpectedLoC[i])
+                {
+                    cachedErrorMsg.Append($"{eLoC} ");
+                }
+
+                cachedErrorMsg.Append($"\nActual code line indexes for block index {i}: ");
+                foreach (int eLoC in debugActualLoC[i])
+                {
+                    cachedErrorMsg.Append($"{eLoC} ");
+                }
+                
+                
                 foundError = true;
-                cachedErrorMsg.Append($"Element at index {i} different:\n Expected \n{expected[i]} \n Actual \n{actual[i]}\n");
+                cachedErrorMsg.Append($"\nElement at index {i} different:\n Expected \n{expected[i]} \n Actual \n{actual[i]}\n");
                 if (failAfterFirst)
                     Assert.Fail(cachedErrorMsg.ToString());
+            
             }
         }
 
@@ -73,8 +95,10 @@ public class AssertSymbolEngine : Assert
 
     }
 
-    public static void TestUniversalLinesOfCode(int expected, List<int> expectedUniversalLineIdxs, int actual, List<int> actualUniveralLineIdxs)
+    public static void TestUniversalLinesOfCode(List<int> expectedUniversalLineIdxs, List<int> actualUniveralLineIdxs)
     {
+        int expected = expectedUniversalLineIdxs.Count;
+        int actual = actualUniveralLineIdxs.Count;
 
         if (expected != actual || !expectedUniversalLineIdxs.SequenceEqual(actualUniveralLineIdxs))
         {
@@ -113,13 +137,11 @@ public class PrepSymbolTestEnv : IDisposable
         string unikraftClientRootPath = Path.Combine(unikraftTestsProjectRootPath, "../UnikraftScanner.Client");
 
         Opts = new PluginOptions(
-            compilerPath: "/usr/bin/clang-18",
-            pluginPath: Path.Combine(unikraftTestsProjectRootPath, "Symbols/dependencies/TestPluginBlockFinder.so"),
-            interceptionResFilePath: Path.Combine(unikraftTestsProjectRootPath, "Symbols/dependencies/discovery_results.txt")
+            CompilerPath: "/usr/bin/clang-18",
+            PluginPath: Path.Combine(unikraftTestsProjectRootPath, "Symbols/dependencies/TestPluginBlockFinder.so"),
+            InterceptionResultsFilePath_External_PluginParam: Path.Combine(unikraftTestsProjectRootPath, "Symbols/dependencies/discovery_results.txt"),
+            PluginStage.Discovery
         );
-
-        // used for discovery stage when we need to find all blocks, this argument is passed as plugin param when executed
-        Opts.RetainExcludedBlocks_PluginParam = true;
 
         prevPWD = Directory.GetCurrentDirectory();
 
@@ -137,9 +159,13 @@ public class PrepSymbolTestEnv : IDisposable
 
         prepareTestEnvironment.Start();
 
-        // Console.WriteLine(prepareTestEnvironment.StandardOutput.ReadToEnd());
         Console.WriteLine(prepareTestEnvironment.StandardError.ReadToEnd());
 
+        if (prepareTestEnvironment.ExitCode != 0)
+        {   
+            throw new InvalidOperationException($"Make command for building plugin failed with exit code {prepareTestEnvironment.ExitCode}");
+        }
+            
         // move the plugin library to tests project
         File.Copy(
             sourceFileName: Path.Combine(unikraftClientRootPath, "Symbols/bin/BlockFinderPlugin.so"),

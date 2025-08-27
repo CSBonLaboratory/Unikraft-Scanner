@@ -1,6 +1,4 @@
 ﻿namespace UnikraftScanner.Client.Helpers;
-
-using System.Text;
 using UnikraftScanner.Client.Defects;
 using UnikraftScanner.Client.Symbols;
 

@@ -3,15 +3,14 @@ using UnikraftScanner.Client.Helpers;
 using System.IO;
 using System.Text.RegularExpressions;
 
-public class SymbolEngine
+public partial class SymbolEngine
 {
-    public record EngineResult(
+    public record EngineDTO(
         List<CompilationBlock> Blocks, int UniversalLinesOfCode,
         List<int> debugUniveralLinesOfCodeIdxs,  // used only for debugging in testing the lines of code
         List<List<int>> debugLinesOfCodeBlocks   // used only for debugging in testing the lines of code, decouple it from Compilation Blocks class
     );
-    private static SymbolEngine? instance = null;
-    private SymbolEngine() { }
+    public SymbolEngine(){}
 
     // cache used in GetLinesOfCodeForBlock() to traverse blocks that have parent counter -1
     // an entry is added in this cache anytime a compilation block in created 
@@ -22,16 +21,6 @@ public class SymbolEngine
     // these intervals are also non-overlaping so no confusion in sorting
     // you can compare them to root nodes of a forest data structure
     private List<int> orphanBlocksCounterCache;
-
-    public static SymbolEngine GetInstance()
-    {
-        if (instance == null)
-        {
-            instance = new SymbolEngine();
-        }
-
-        return instance;
-    }
 
     private string RemoveComments(string sourceFileRawContent)
     {
@@ -113,127 +102,14 @@ public class SymbolEngine
 
     }
 
-    private static void ParseResultsPluginBlock(ref int startLine, ref int startLineEnd, ref int endLine, CompilationBlockTypes directiveType, string[] blockInfoLines, List<string> sourceLines)
-    {
-        // format is <ID NUMBER FOR ANY BLOCK ACCORDING TO CompilationBlockTypes.cs> IF/IFDEF/IFNDEF/ELIF/ELSE/ENDIF <start line> <start column>
-
-        /*
-        Rules:
-        1. No multiline can split inside a directive name
-        Ex:
-        #if\
-        def
-
-        2. No multiline for #endif, if backslash appears just igonore it and further lines are counted as code lines since the plugin also cannot detect multiline endif
-
-        3. multiline for if, ifdef, ifndef, else, elif can be done to split the expression or operands not directive name itself
-
-        4. this method only finds the lines involved in the expressing the entire directive but advanced parsing is done in LexCondition
-        */
-
-        startLine = int.Parse(blockInfoLines[0].Split()[2]);
-
-
-        // https://github.com/CSBonLaboratory/Unikraft-Scanner/issues/14#issuecomment-3092359691
-        if (!Regex.Replace(sourceLines[startLine], @"#\s+", "#").Contains($"#{directiveType.ToString().ToLower()}"))
-            throw new WrongPreprocessorDirectiveException($"Full name of the directive needs to be placed at line {startLine} for directive {directiveType}");
-
-        if (directiveType == CompilationBlockTypes.IF)
-            {
-
-                startLineEnd = int.Parse(blockInfoLines[2].Split()[1]);
-
-                // we are not in the state to find the end line of the block, it might be an elif, else or endif
-                endLine = -1;
-            }
-            else if (new[] { CompilationBlockTypes.IFDEF, CompilationBlockTypes.IFNDEF }.Contains(directiveType))
-            {
-                // the plugin does not show the StartEndLine where the whole multiline expression ends thus we increment the line until we dont find any backslash
-                // however keep in mind https://github.com/CSBonLaboratory/Unikraft-Scanner/issues/14#issuecomment-3092380988
-                // backslash cannot split through directive name or add multiple symbols for IFDEF and IFNDEF
-                // further processing is done in LexCondition
-                if (sourceLines[startLine].Contains('\\'))
-                {
-                    int i;
-                    for (i = startLine + 1; sourceLines[i].Contains('\\'); i++) ;
-
-                    startLineEnd = i;
-                }
-                else
-                    startLineEnd = startLine;
-
-                // we are not in the state to find the end line of the block, it might be an elif, else or endif
-                endLine = -1;
-            }
-
-            // in order to solve https://github.com/CSBonLaboratory/Unikraft-Scanner/issues/14#issuecomment-3094635526
-            else if (directiveType == CompilationBlockTypes.ELSE)
-            {
-                startLineEnd = startLine;
-
-                // we are not in the state to find the end line of the block, it might be an elif, else or endif
-                endLine = -1;
-            }
-
-            else if (directiveType == CompilationBlockTypes.ELIF)
-            {
-                // very similar to #if
-                startLineEnd = int.Parse(blockInfoLines[3].Split()[1]);
-
-                // we are not in the state to find the end line of the block, it might be an elif, else or endif
-                endLine = -1;
-            }
-            else if (directiveType == CompilationBlockTypes.ENDIF)
-            {
-                // start line and startLineEnd are populated by the first incomplete block from the stack that ends at this endif
-                startLine = -1;
-                startLineEnd = -1;
-
-                // endif is not multiline
-                // if backslash occurs just igore it and other lines after endif are counted as code line
-                endLine = int.Parse(blockInfoLines[0].Split()[2]);
-
-            }
-            else
-            {
-                throw new InvalidOperationException($" UNKNOWN DIRECTIVE TYPE: {directiveType}");
-            }
-
-        
-            
-
-    }
-
     private void CountLinesOfCodeInSourceFile(List<string> sourceLines, List<CompilationBlock> foundBlocks, ref int universalLinesOfCode, List<int> debugUniversalLineIdxs, List<List<int>> debugLinesOfCodeBlocks)
     {
-        bool FastFindCodeLine(string line)
-        {
-            bool foundC = false;
-            foreach (Char c in line)
-                if (Char.IsWhiteSpace(c) == false)
-                {
-                    foundC = true;
-                    break;
-                }
 
-            return foundC;
-        }
+        // count lines if current block also has embeded children
+        // a line of code for the current block is either from start of the current block until the first child,
+        // or between children (gaps) (so it is not contained in any child)
+        // or from last child until the end of the current block
 
-        // corner case when we dont have any compilation blocks conditioned by preprocessor directives
-        if (this.orphanBlocksCounterCache.Count == 0)
-        {
-            // dont forget ! we start from 1 because we also add a new line so that startLine/endLine should start at 1 like many IDEs
-            for (int i = 1; i < sourceLines.Count; i++)
-                if (FastFindCodeLine(sourceLines[i]))
-                {
-                    universalLinesOfCode++;
-
-                    debugUniversalLineIdxs.Add(i);
-                }
-            return;
-        }
-
-    
         // add a fake compilation block that represents the whole source file
         CompilationBlock fakeWholeSourceRootBlock = new CompilationBlock(
             type: CompilationBlockTypes.ROOT,
@@ -247,112 +123,88 @@ public class SymbolEngine
             children: orphanBlocksCounterCache  // dont forget to use incremented elements since this fake block will also be added to the block list
         );
 
+        // we remove it when we finish counting lines of code
         foundBlocks.Insert(0, fakeWholeSourceRootBlock);
 
-        // now count lines of code for all blocks
-        // a line of code is counted only once in the most specific/precise/small block that contains it
-        foreach (CompilationBlock currentBlock in foundBlocks)
+        // lines of code are between gaps enclosed in a block with no nested children, or between blocks of same rank (siblings)
+        foreach (Gap gap in new GapSourceFileCollection(foundBlocks, this, sourceLines.Count))
         {
-            // if block does not have any embeded blocks just iterate through start-end
-            if (currentBlock.Children == null || currentBlock.Children.Count == 0)
+            int loc = 0;
+            for (int i = gap.StartLine; i <= gap.EndLine; i++)
             {
-                for (int i = currentBlock.StartLineEnd + 1; i < currentBlock.EndLine; i++)
+                bool foundC = false;
+                foreach (Char c in sourceLines[i])
                 {
-                    if (FastFindCodeLine(sourceLines[i]))
+                    if (Char.IsWhiteSpace(c) == false)
                     {
-                        currentBlock.Lines++;
+                        foundC = true;
+                        break;
+                    }
+                }
 
-                        // used only for debugging in tests
-#if TEST_SYMBOL_CODE_LINES
-                        if (currentBlock.Equals(fakeWholeSourceRootBlock))
+                if (foundC)
+                {
+                    loc++;
+                    // debug purposes during test running
+                    #if TEST_SYMBOL_CODE_LINES
+                        if (gap.EnclosingBlockIdx == -1)
                             debugUniversalLineIdxs.Add(i);
                         else{
-                            debugLinesOfCodeBlocks[currentBlock.BlockCounter].Add(i);
+                            debugLinesOfCodeBlocks[gap.EnclosingBlockIdx].Add(i);
                         }
-#endif
-
-                    }
+                    #endif
                 }
             }
-            else
-            {
-                // count lines if current block also has embeded children
-                // a line of code for the current block is either from start of the current block until the first child,
-                // or between children (gaps) (so it is not contained in any child)
-                // or from last child until the end of the current block
 
-                // + 1 here is added because we also previously added the fake compilation block for the whole source file
-                CompilationBlock firstChild = foundBlocks[currentBlock.Children[0] + 1];
-
-                // lines before first child
-                for (int begin = currentBlock.StartLineEnd + 1; begin < firstChild.StartLine; begin++)
-                    if (FastFindCodeLine(sourceLines[begin]))
-                    {
-                        currentBlock.Lines++;
-
-                        // used only for debugging in tests
-#if TEST_SYMBOL_CODE_LINES
-                        if (currentBlock.Equals(fakeWholeSourceRootBlock))
-                            debugUniversalLineIdxs.Add(begin);
-                        else
-                            debugLinesOfCodeBlocks[currentBlock.BlockCounter].Add(begin);
-#endif
-
-                    }
-
-
-                // lines between children
-                for (int i = 0; i < currentBlock.Children.Count - 1; i++)
-                {
-                    CompilationBlock childBlock = foundBlocks[currentBlock.Children[i] + 1]; // we increment since we added that fake root block that will be later removed
-                    CompilationBlock childNextBlock = foundBlocks[currentBlock.Children[i + 1] + 1];
-                    for (int j = childBlock.EndLine + 1; j < childNextBlock.StartLine; j++)
-                    {
-                        if (FastFindCodeLine(sourceLines[j]))
-                        {
-                            currentBlock.Lines++;
-
-                            // used only for debugging in tests
-#if TEST_SYMBOL_CODE_LINES
-                            if (currentBlock.Equals(fakeWholeSourceRootBlock))
-                                debugUniversalLineIdxs.Add(j);
-                            else
-                                debugLinesOfCodeBlocks[currentBlock.BlockCounter].Add(j);
-#endif
-                        }
-                    }
-
-                }
-
-                CompilationBlock lastChild = foundBlocks[currentBlock.Children.Last() + 1];
-
-                // lines after last child
-                for (int i = lastChild.EndLine + 1; i < currentBlock.EndLine; i++)
-                {
-                    if (FastFindCodeLine(sourceLines[i]))
-                    {
-                        currentBlock.Lines++;
-
-                        // used only for debugging in tests
-#if TEST_SYMBOL_CODE_LINES
-                        if (currentBlock.Equals(fakeWholeSourceRootBlock))
-                            debugUniversalLineIdxs.Add(i);
-                        else
-                            debugLinesOfCodeBlocks[currentBlock.BlockCounter].Add(i);
-#endif
-                    }
-                }
-            }
+            // dont forget that we increment 1 since we added that fake root block
+            // add new LoC statistics 
+            foundBlocks[gap.EnclosingBlockIdx + 1].Lines += loc;
         }
-
         universalLinesOfCode = foundBlocks[0].Lines;
-
         foundBlocks.RemoveAt(0);
     }
 
-    public EngineResult? FindCompilationBlocksAndLines(string sourceFileAbsPath, PluginOptions opts, string targetCompilationCommand)
-    {
+    // public int[]? TriggerCompilationBlocks(List<CompilationBlock> discoveredBlocksOrdered, PluginOptions opts, string targetCompilationCommand)
+    // {
+    //     List<int> activeBlocksIdxs = new();
 
+    //     string[] rawBlocks = new CompilerPlugin(targetCompilationCommand, opts).ExecutePlugin();
+
+    //     Dictionary<int, bool> incompleteTriggeredBlocksStartLine = new();
+
+    //     foreach (string block in rawBlocks)
+    //     {
+    //         string[] blockInfoLines = block.Split("\n");
+
+    //         CompilationBlockTypes directiveType = (CompilationBlockTypes)int.Parse(blockInfoLines[0].Split()[0]);
+
+    //         if (directiveType == CompilationBlockTypes.ENDIF || directiveType == CompilationBlockTypes.ELSE)
+    //             continue;
+
+    //         int startLine = int.Parse(blockInfoLines[0].Split()[2]);
+
+    //         bool evalType = bool.Parse(blockInfoLines[^1].Split(" ")[1]);
+
+    //         if (evalType == true)
+    //         {
+    //             incompleteTriggeredBlocksStartLine.Add(startLine, true);
+    //         }
+    //     }
+
+    //     Queue<CompilationBlock> traverseNodes = new(discoveredBlocksOrdered.Where(cb => cb.ParentCounter == -1).ToList());
+
+    //     while (traverseNodes.Count > 0)
+    //     {
+    //         CompilationBlock current 
+    //     }
+
+    // }
+    public ResultUnikraftScanner<EngineDTO> DiscoverCompilationBlocksAndLines(string sourceFileAbsPath, PluginOptions opts, string targetCompilationCommand)
+    {
+        if (opts.Stage_RetainExcludedBlocks_Internal_PluginParam != PluginStage.Discovery)
+        {
+            return null;
+        }
         List<CompilationBlock> foundBlocks = new();
 
         // since this method is used only once on a source file we need to reset the cache
@@ -363,11 +215,14 @@ public class SymbolEngine
 
         // the decision of using the compiler in Discovery stage (first passing) or in Triggering stage (second passing) is done outside SymbolEngine 
         // in the CompilerOptions
-        string[]? rawBlocks = new CompilerPlugin(targetCompilationCommand, opts).ExecutePlugin();
+        var compilerResult = new CompilerPlugin(targetCompilationCommand, opts).ExecutePlugin();
 
-        // the source file has compilation errors
-        if (rawBlocks == null)
-            return null;
+        if (!compilerResult.IsSuccess)
+        {
+            return ResultUnikraftScanner<EngineDTO>.Failure(compilerResult.Error);
+        }
+
+        string[] rawBlocks = compilerResult.Value;
 
         // we just add a blank line so that line indexes start from 1 just to match line numbers counted by the plugin (most IDEs count lines starting from 1)
         sourceLines.Insert(0, "");
@@ -386,99 +241,111 @@ public class SymbolEngine
             // reset parent counter
             parentCounter = -1;
 
-            ParseResultsPluginBlock(ref startLine, ref startLineEnd, ref endLine, directiveType, blockInfoLines, sourceLines);
+            ResultUnikraftScanner<ParseCoordsDTO> res =
+                ParseBlockBounds(startLine, startLineEnd, endLine, directiveType, blockInfoLines, sourceLines);
+            
+                if (res.IsSuccess)
+                {
+                    startLine = res.Value.StartLine;
+                    startLineEnd = res.Value.StartLineEnd;
+                    endLine = res.Value.EndLine;
+                }
+                else
+                {
+                    return ResultUnikraftScanner<EngineDTO>.Failure(res.Error);
+                }
 
             if (directiveType == CompilationBlockTypes.ENDIF)
-            {
-
-                CompilationBlock endingBlock = openedBlocks.Pop();
-
-                endingBlock.EndLine = endLine;
-
-                foundBlocks.Add(endingBlock);
-            }
-            else if (new[] { CompilationBlockTypes.IF, CompilationBlockTypes.IFDEF, CompilationBlockTypes.IFNDEF }.Contains(directiveType))
-            {
-
-                // see if current block has a parent and then link each other
-                if (openedBlocks.Count > 0)
                 {
-                    CompilationBlock parentBlock = openedBlocks.Peek();
 
-                    if (parentBlock.Children == null)
-                        parentBlock.Children = new List<int>() { blockCounter };
-                    else
-                        parentBlock.Children.Add(blockCounter);
+                    CompilationBlock endingBlock = openedBlocks.Pop();
+
+                    endingBlock.EndLine = endLine;
+
+                    foundBlocks.Add(endingBlock);
+                }
+                else if (new[] { CompilationBlockTypes.IF, CompilationBlockTypes.IFDEF, CompilationBlockTypes.IFNDEF }.Contains(directiveType))
+                {
+
+                    // see if current block has a parent and then link each other
+                    if (openedBlocks.Count > 0)
+                    {
+                        CompilationBlock parentBlock = openedBlocks.Peek();
+
+                        if (parentBlock.Children == null)
+                            parentBlock.Children = new List<int>() { blockCounter };
+                        else
+                            parentBlock.Children.Add(blockCounter);
 
 
-                    parentCounter = parentBlock.BlockCounter;
+                        parentCounter = parentBlock.BlockCounter;
+
+                    }
+
+                    CompilationBlock currentBlock = new CompilationBlock(
+                        type: directiveType,
+                        condition: LexCondition(directiveType, sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
+                        startLine: startLine,
+                        blockCounter: blockCounter,
+                        startLineEnd: startLineEnd,
+                        // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
+                        endLine: -1,
+                        parentCounter: parentCounter);
+
+                    openedBlocks.Push(currentBlock);
+
+                    // this block would be a child of a root "fake" compilation block that contains the entire source file
+                    if (parentCounter == -1)
+                    {
+                        orphanBlocksCounterCache.Add(blockCounter);
+                    }
+
+                    blockCounter++;
 
                 }
-
-                CompilationBlock currentBlock = new CompilationBlock(
-                    type: directiveType,
-                    condition: LexCondition(directiveType, sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
-                    startLine: startLine,
-                    blockCounter: blockCounter,
-                    startLineEnd: startLineEnd,
-                    // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
-                    endLine: -1,
-                    parentCounter: parentCounter);
-
-                openedBlocks.Push(currentBlock);
-
-                // this block would be a child of a root "fake" compilation block that contains the entire source file
-                if (parentCounter == -1)
+                else if (new[] { CompilationBlockTypes.ELIF, CompilationBlockTypes.ELSE }.Contains(directiveType))
                 {
-                    orphanBlocksCounterCache.Add(blockCounter);
+
+                    // finalize processing previous branch block (a previous elif, if, ifndef, ifdef)
+                    CompilationBlock siblingBlock = openedBlocks.Pop();
+
+                    siblingBlock.EndLine = startLine;
+                    foundBlocks.Add(siblingBlock);
+
+                    // see if current block has a parent and then link each other
+                    if (openedBlocks.Count > 0)
+                    {
+                        CompilationBlock parentBlock = openedBlocks.Peek();
+
+                        if (parentBlock.Children == null)
+                            parentBlock.Children = new List<int>() { blockCounter };
+                        else
+                            parentBlock.Children.Add(blockCounter);
+
+                        parentCounter = parentBlock.BlockCounter;
+                    }
+
+                    CompilationBlock currentBlock = new CompilationBlock(
+                        type: directiveType,
+                        LexCondition(directiveType, sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
+                        startLine: startLine,
+                        blockCounter: blockCounter,
+                        startLineEnd: startLineEnd,
+                        // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
+                        endLine: -1,
+                        parentCounter: parentCounter
+                    );
+                    openedBlocks.Push(currentBlock);
+
+                    // this block would be a child of a root "fake" compilation block that contains the entire source file
+                    if (parentCounter == -1)
+                    {
+                        orphanBlocksCounterCache.Add(blockCounter);
+                    }
+
+                    blockCounter++;
+
                 }
-
-                blockCounter++;
-
-            }
-            else if (new[] { CompilationBlockTypes.ELIF, CompilationBlockTypes.ELSE }.Contains(directiveType))
-            {
-
-                // finalize processing previous branch block (a previous elif, if, ifndef, ifdef)
-                CompilationBlock siblingBlock = openedBlocks.Pop();
-               
-                siblingBlock.EndLine = startLine;
-                foundBlocks.Add(siblingBlock);
-
-                // see if current block has a parent and then link each other
-                if (openedBlocks.Count > 0)
-                {
-                    CompilationBlock parentBlock = openedBlocks.Peek();
-
-                    if (parentBlock.Children == null)
-                        parentBlock.Children = new List<int>() { blockCounter };
-                    else
-                        parentBlock.Children.Add(blockCounter);
-
-                    parentCounter = parentBlock.BlockCounter;
-                }
-
-                CompilationBlock currentBlock = new CompilationBlock(
-                    type: directiveType,
-                    LexCondition(directiveType, sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
-                    startLine: startLine,
-                    blockCounter: blockCounter,
-                    startLineEnd: startLineEnd,
-                    // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
-                    endLine: -1,
-                    parentCounter: parentCounter
-                );
-                openedBlocks.Push(currentBlock);
-
-                // this block would be a child of a root "fake" compilation block that contains the entire source file
-                if (parentCounter == -1)
-                {
-                    orphanBlocksCounterCache.Add(blockCounter);
-                }
-
-                blockCounter++;
-
-            }
 
         }
 
@@ -488,13 +355,14 @@ public class SymbolEngine
 
         List<int> debugUniversalLinesOfCodeIdxs = new();
         List<List<int>> debugLinesOfCodeBlocks = new(foundBlocks.Count);
-        for (int i = 0; i < foundBlocks.Count; i++) {
+        for (int i = 0; i < foundBlocks.Count; i++)
+        {
             debugLinesOfCodeBlocks.Add(new List<int>());
         }
 
         CountLinesOfCodeInSourceFile(sourceLines, foundBlocks, ref universalLinesOfCode, debugUniversalLinesOfCodeIdxs, debugLinesOfCodeBlocks);
 
-        return new EngineResult(foundBlocks, universalLinesOfCode, debugUniversalLinesOfCodeIdxs, debugLinesOfCodeBlocks);
+        return (ResultUnikraftScanner<EngineDTO>)new EngineDTO(foundBlocks, universalLinesOfCode, debugUniversalLinesOfCodeIdxs, debugLinesOfCodeBlocks);
     }
 
 

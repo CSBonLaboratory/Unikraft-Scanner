@@ -13,6 +13,7 @@ public class FakeDirectivesTest : BaseSymbolTest
     private readonly ITestOutputHelper output;
 
     [Fact]
+    [Trait("Category", "DiscoveryStage")]
     public void FindCompilationBlocks_Comments_CodeMultiLine_DirectivesAsStringsAndVariables()
     {
         /*
@@ -35,11 +36,18 @@ public class FakeDirectivesTest : BaseSymbolTest
 
         string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/Discovery/inputs/fake_directives.c");
 
-        var actual = SymbolEngine.GetInstance().FindCompilationBlocksAndLines(
+        var actualResult = new SymbolEngine().DiscoverCompilationBlocksAndLines(
             sourceFileAbsPath,
             opts: SymbolTestEnv.Opts,
-            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath} {DiscoveryStageCommandParser.additionalFlags}"
+            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath}"
         );
+
+        if (!actualResult.IsSuccess)
+        {
+            Assert.Fail(((ErrorUnikraftScanner<string>)actualResult.Error).Data);
+        }
+
+        SymbolEngine.EngineDTO actual = actualResult.Value;
 
         List<CompilationBlock> expected = [
 
@@ -68,16 +76,6 @@ public class FakeDirectivesTest : BaseSymbolTest
         ];
 
         List<CompilationBlock> actualBlocks = actual.Blocks;
-        AssertSymbolEngine.TestCustomLists<CompilationBlock>(expected, actualBlocks, "Check compilation blocks:");
-
-        // comments should have been eliminated before parsing the source file for compilation blocks and lines of code counting
-        List<int> expectedUniversalLines = new() { 2, 3, 14, 15, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 41, 42, 43, 47, 48, 49, 50, 51, 53, 54, 55, 57, 68, 70, 71, 72, 73, 87 };
-        AssertSymbolEngine.TestUniversalLinesOfCode(
-            expectedUniversalLines.Count,
-            expectedUniversalLines,
-            actual.UniversalLinesOfCode,
-            actual.debugUniveralLinesOfCodeIdxs
-        );
 
         List<List<int>> expectedCodeLinesInBlocks = [
             [17, 18, 19],
@@ -86,6 +84,23 @@ public class FakeDirectivesTest : BaseSymbolTest
 
         List<List<int>> actualCodeLinesInBlocks = actual.debugLinesOfCodeBlocks;
 
+        // comments should have been eliminated before parsing the source file for compilation blocks and lines of code counting
+        List<int> expectedUniversalLines = new() { 2, 3, 14, 15, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 41, 42, 43, 47, 48, 49, 50, 51, 53, 54, 55, 57, 68, 70, 71, 72, 73, 87 };
+
+        AssertSymbolEngine.TestCustomLists<CompilationBlock>(
+            expected,
+            actualBlocks,
+            "Check compilation blocks:",
+            expectedCodeLinesInBlocks,
+            actualCodeLinesInBlocks
+        );
+
+        AssertSymbolEngine.TestUniversalLinesOfCode(
+            expectedUniversalLines,
+            actual.debugUniveralLinesOfCodeIdxs
+        );
+
+        
         AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
 
 

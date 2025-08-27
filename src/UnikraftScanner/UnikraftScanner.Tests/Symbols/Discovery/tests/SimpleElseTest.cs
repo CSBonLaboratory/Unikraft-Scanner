@@ -13,6 +13,7 @@ public class SimpleElse : BaseSymbolTest
     private readonly ITestOutputHelper output;
 
     [Fact]
+    [Trait("Category", "DiscoveryStage")]
     public void FindCompilationBlocks_AllTypes_NoComments_NoNested_OneLinerCondition_MultiLineCode_NoPadding_WithElse()
     {
         /*
@@ -29,13 +30,19 @@ public class SimpleElse : BaseSymbolTest
             #else can be after and #ifdef, #ifndef or after an #elif
         */
         string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/Discovery/inputs/simple_else.c");
-        var actual = SymbolEngine
-        .GetInstance()
-        .FindCompilationBlocksAndLines(
+        var actualResult = new SymbolEngine()
+        .DiscoverCompilationBlocksAndLines(
             sourceFileAbsPath,
             SymbolTestEnv.Opts,
-            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath} {DiscoveryStageCommandParser.additionalFlags}"
+            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath}"
             );
+
+        if (!actualResult.IsSuccess)
+        {
+            Assert.Fail(((ErrorUnikraftScanner<string>)actualResult.Error).Data);
+        }
+
+        SymbolEngine.EngineDTO actual = actualResult.Value;
 
         var expected = new List<CompilationBlock>{
                 new CompilationBlock(
@@ -183,15 +190,6 @@ public class SimpleElse : BaseSymbolTest
             };
 
         List<CompilationBlock> actualBlocks = actual.Blocks;
-        AssertSymbolEngine.TestCustomLists<CompilationBlock>(expected, actualBlocks, "Check compilation blocks:");
-
-        List<int> expectedUniversalLines = new() { 1, 2, 3, 26, 45, 61 };
-        AssertSymbolEngine.TestUniversalLinesOfCode(
-            expectedUniversalLines.Count,
-            expectedUniversalLines,
-            actual.UniversalLinesOfCode,
-            actual.debugUniveralLinesOfCodeIdxs
-        );
 
         List<List<int>> expectedCodeLinesInBlocks = [
 
@@ -212,6 +210,23 @@ public class SimpleElse : BaseSymbolTest
         ];
 
         List<List<int>> actualCodeLinesInBlocks = actual.debugLinesOfCodeBlocks;
+
+        List<int> expectedUniversalLines = new() { 1, 2, 3, 26, 45, 61 };
+
+        AssertSymbolEngine.TestCustomLists<CompilationBlock>(
+            expected,
+            actualBlocks,
+            "Check compilation blocks:",
+            expectedCodeLinesInBlocks,
+            actualCodeLinesInBlocks
+        );
+
+        AssertSymbolEngine.TestUniversalLinesOfCode(
+            expectedUniversalLines,
+            actual.debugUniveralLinesOfCodeIdxs
+        );
+
+        
 
         AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
     }
