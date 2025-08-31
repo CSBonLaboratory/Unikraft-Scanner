@@ -3,6 +3,8 @@
 public interface IErrorUnikraftScanner
 {
     public ErrorTypes GetErrorType();
+
+    public object GetData();
 }
 public class ErrorUnikraftScanner<F> : IErrorUnikraftScanner
 {
@@ -19,4 +21,6 @@ public class ErrorUnikraftScanner<F> : IErrorUnikraftScanner
     {
         return ErrCode;
     }
+
+    virtual public object GetData() => Data;
 }

@@ -6,5 +6,7 @@ public enum ErrorTypes
     UnknowDirectiveName,
     CompilationInPluginFailure,
     UnknownCompilerFound,
-    CFamillyCompilerNotFound
+    CFamillyCompilerNotFound,
+    WrongPluginPhase,
+
 }

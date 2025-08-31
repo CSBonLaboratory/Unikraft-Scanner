@@ -17,7 +17,6 @@ public class CompilationErrorTest : BaseSymbolTest
 
     [Theory]
     [Trait("Category", "DiscoveryStage")]
-    [InlineData("wrong_compilation_error.c")]
     [InlineData("wrong_multiline_backslash_split_elif.c")]
     [InlineData("wrong_multiline_backslash_split_else.c")]
     [InlineData("wrong_multiline_backslash_split_if.c")]
@@ -33,15 +32,16 @@ public class CompilationErrorTest : BaseSymbolTest
     [InlineData("wrong_nested_multiline_if.c")]
     [InlineData("wrong_nested_multiline_ifdef.c")]
     [InlineData("wrong_nested_multiline_ifndef.c")]
-    public void FindCompilationBlocks_WrongOrError(string testNameFile)
+    public void FindCompilationBlocks_WrongTests(string testNameFile)
     {
         /*
         Macro expansion must not be made in order to preserve the correct line and column location of the Compilation blocks
         */
 
-        string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), $"../../../Symbols/Discovery/inputs/{testNameFile}");
+        string sourceFileAbsPath = Path.Combine(
+            Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), $"../../../Symbols/Discovery/inputs/{testNameFile}");
 
-        
+
         var actual = new SymbolEngine().DiscoverCompilationBlocksAndLines(
             sourceFileAbsPath,
             opts: SymbolTestEnv.Opts,
@@ -54,8 +54,35 @@ public class CompilationErrorTest : BaseSymbolTest
         }
         else if (actual.Error.GetErrorType() != ErrorTypes.WrongPreprocessorDirective)
         {
-            Assert.Fail($"Test failed but error is not {ErrorTypes.WrongPreprocessorDirective} but {actual.Error.GetErrorType()}");
+            Assert.Fail(
+                @$"Test failed but error is not {ErrorTypes.WrongPreprocessorDirective} 
+                but {actual.Error.GetErrorType()} and contents:\n{actual.Error.GetData()}");
         }
 
+    }
+
+    [Trait("Category", "DiscoveryStage")]
+    [Fact]
+    public void FindCompilatioBlocks_CompileError()
+    {
+        string sourceFileAbsPath = Path.Combine(
+            Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), $"../../../Symbols/Discovery/inputs/compilation_error");
+
+        var actual = new SymbolEngine().DiscoverCompilationBlocksAndLines(
+            sourceFileAbsPath,
+            opts: SymbolTestEnv.Opts,
+            targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath}"
+        );
+
+        if (actual.IsSuccess)
+        {
+            Assert.Fail("Test must have expected failed result but actual value has succeeded");
+        }
+        else if (actual.Error.GetErrorType() != ErrorTypes.CompilationInPluginFailure)
+        {
+            Assert.Fail(
+                @$"Test failed but error is not {ErrorTypes.CompilationInPluginFailure} but 
+                {actual.Error.GetErrorType()} with contents:\n {actual.Error.GetData()}");
+        }
     }
 }
