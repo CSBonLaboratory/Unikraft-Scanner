@@ -34,7 +34,9 @@ public class ShawarmaTest : BaseSymbolTest
 
         if (!actualResult.IsSuccess)
         {
-            Assert.Fail(((ErrorUnikraftScanner<string>)actualResult.Error).Data);
+            Assert.Fail(
+                $"Test failed with custom error: {actualResult.Error}"
+            );
         }
 
         SymbolEngine.EngineDTO actual = actualResult.Value;

@@ -81,8 +81,9 @@ public class CompilationErrorTest : BaseSymbolTest
         else if (actual.Error.GetErrorType() != ErrorTypes.CompilationInPluginFailure)
         {
             Assert.Fail(
-                @$"Test failed but error is not {ErrorTypes.CompilationInPluginFailure} but 
-                {actual.Error.GetErrorType()} with contents:\n {actual.Error.GetData()}");
+                $"Test failed with custom error: {actual.Error}"
+            );
         }
+        
     }
 }

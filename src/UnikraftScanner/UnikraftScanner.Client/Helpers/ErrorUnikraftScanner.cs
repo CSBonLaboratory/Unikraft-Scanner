@@ -17,10 +17,15 @@ public class ErrorUnikraftScanner<F> : IErrorUnikraftScanner
 
     public ErrorTypes ErrCode;
     public F Data { get; init; }
-    virtual public ErrorTypes GetErrorType()
+    public ErrorTypes GetErrorType()
     {
         return ErrCode;
     }
 
-    virtual public object GetData() => Data;
+    public object GetData() => Data;
+
+    override public string ToString()
+    {
+        return $"Type: {ErrCode}\n Content: {Data}";
+    }
 }
