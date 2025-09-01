@@ -54,9 +54,9 @@ public class CompilationErrorTest : BaseSymbolTest
         }
         else if (actual.Error.GetErrorType() != ErrorTypes.WrongPreprocessorDirective)
         {
-            Assert.Fail(
-                @$"Test failed but error is not {ErrorTypes.WrongPreprocessorDirective} 
-                but {actual.Error.GetErrorType()} and contents:\n{actual.Error.GetData()}");
+           Assert.Fail(
+                $"Test expecting error {ErrorTypes.WrongPreprocessorDirective} but failed with custom error: {actual.Error}"
+            );
         }
 
     }
@@ -81,7 +81,7 @@ public class CompilationErrorTest : BaseSymbolTest
         else if (actual.Error.GetErrorType() != ErrorTypes.CompilationInPluginFailure)
         {
             Assert.Fail(
-                $"Test failed with custom error: {actual.Error}"
+                $"Test expecting error {ErrorTypes.CompilationInPluginFailure} but failed with custom error: {actual.Error}"
             );
         }
         
