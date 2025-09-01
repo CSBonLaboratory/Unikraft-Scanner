@@ -4,6 +4,7 @@ using Xunit.Abstractions;
 using UnikraftScanner.Client.Symbols;
 using System.Reflection;
 using UnikraftScanner.Client;
+using UnikraftScanner.Client.Helpers;
 
 public class CommandButNoCompileTest
 {
@@ -15,7 +16,7 @@ public class CommandButNoCompileTest
     }
 
     [Fact]
-    [Trait("Category", "CompileParse")]
+    [Trait("Category", "ParseCompileCmd")]
     public void AllStages_CommandButNoCompile()
     {
         // we have an .o.cmd file but the command is not for compilation using a known compiler but maybe other tool
@@ -24,19 +25,16 @@ public class CommandButNoCompileTest
             Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),
             "../../../Symbols/inputs/command_but_no_compile.o.cmd");
 
-        try
+        var actualResult = new NormalCompilationCommandParser().ParseCommand(oDotCmdFilePath);
+        if (actualResult.IsSuccess)
         {
-            new NormalCompilationCommandParser().ParseCommand(oDotCmdFilePath);
+            Assert.Fail("Test must fail however it succeded");
         }
-        catch (UnknownCompilerFound)
+        else if (actualResult.Error.GetErrorType() != ErrorTypes.UnknownCompilerFound)
         {
-            // congrats it's the right exception
+            Assert.Fail(
+                $"Test expecting error {ErrorTypes.UnknownCompilerFound} but failed with custom error: {actualResult.Error}"
+            );
         }
-        catch (Exception oops)
-        {
-            Assert.Fail($"Unexpected crash or wrong exception:\n {oops.Message}");
-        }
-
-        Assert.Fail("Test with wrong contents did not raise an UnknownCompilerFound exception !");
     }
 }

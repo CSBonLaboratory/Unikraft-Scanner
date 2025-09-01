@@ -3,6 +3,7 @@
 using Xunit.Abstractions;
 using UnikraftScanner.Client.Symbols;
 using System.Reflection;
+using UnikraftScanner.Client.Helpers;
 
 public class AdjacentDefinesTest
 {
@@ -14,7 +15,7 @@ public class AdjacentDefinesTest
     }
 
     [Fact]
-    [Trait("Category", "CompileParse")]
+    [Trait("Category", "ParseCompileCmd")]
     public void TriggerStage_AdjacentDefinesTest()
     {
         // we have an .o.cmd file but the command is not for compilation using a known compiler but maybe other tool
@@ -23,8 +24,15 @@ public class AdjacentDefinesTest
             Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),
             "../../../Symbols/inputs/adjacent_defines_mixed.o.cmd");
 
+        var actualResult = new NormalCompilationCommandParser().ParseCommand(oDotCmdFilePath);
+        if (!actualResult.IsSuccess)
+        {
+            Assert.Fail(
+                $"Test failed with custom error: {actualResult.Error}"
+            );
+        }
 
-        NormalCommandResult expected = new(
+        NormalCommandDTO expected = new(
             includeTokens: [],
             orderedSymbolDefineTokens: ["-DAAAA", "-D", "YYY", "-flag2", "-U", "YYY", "-D", "XXX", "-DA", "-UQQ", "-U", "ZS"],
             otherTokens: ["-c", "main.c", "-o", "main.o", "-no-define-flag", "-no-define-flag1", "-flag3"],
@@ -35,9 +43,8 @@ public class AdjacentDefinesTest
 
         );
 
+        
 
-        Assert.Equal(expected, new NormalCompilationCommandParser().ParseCommand(oDotCmdFilePath));
-
-
+        Assert.Equal(expected, actualResult.Value);
     }
 }

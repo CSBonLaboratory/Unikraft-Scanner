@@ -3,6 +3,8 @@
 using Xunit.Abstractions;
 using UnikraftScanner.Client.Symbols;
 using System.Reflection;
+using UnikraftScanner.Client.Helpers;
+
 public class FalseDefineFlagTest
 {
     private readonly ITestOutputHelper output;
@@ -13,7 +15,7 @@ public class FalseDefineFlagTest
     }
 
     [Fact]
-    [Trait("Category", "CompileParse")]
+    [Trait("Category", "ParseCompileCmd")]
     public void DiscoveryStage_FalseFlagsTest()
     {
         string oDotCmdFilePath = Path.Combine(
@@ -23,7 +25,7 @@ public class FalseDefineFlagTest
         // flag that contains -D<symbol name> sequence is not a define flag if it has prefix such as "-fake-flag"
         // --U does not exist as undefine flag
 
-        NormalCommandResult expected = new(
+        NormalCommandDTO expected = new(
             includeTokens: [],
             orderedSymbolDefineTokens: [],
             otherTokens: ["-fake-flag-DSYMBOL", "--D", "SYMBOL1", "-c", "/home/haproxy/main.c", "-fake-flag-USYMBOL", "-o", "./main.o", "--U", "SYMBOL1"],
@@ -33,6 +35,12 @@ public class FalseDefineFlagTest
             fullCommand: "gcc -fake-flag-DSYMBOL --D SYMBOL1 -c /home/haproxy/main.c -fake-flag-USYMBOL -o ./main.o --U SYMBOL1"
         );
 
-        Assert.Equal(expected, new NormalCompilationCommandParser().ParseCommand(oDotCmdFilePath));
+        var actualResult = new NormalCompilationCommandParser().ParseCommand(oDotCmdFilePath);
+        if (!actualResult.IsSuccess)
+        {
+            Assert.Fail(((ErrorUnikraftScanner<string>)actualResult.Error).Data);
+        }
+
+        Assert.Equal(expected, actualResult.Value);
     }
 }

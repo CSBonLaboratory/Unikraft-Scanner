@@ -3,6 +3,7 @@
 using Xunit.Abstractions;
 using UnikraftScanner.Client.Symbols;
 using System.Reflection;
+using UnikraftScanner.Client.Helpers;
 public class DefineCaseSensitiveTest
 {
     private readonly ITestOutputHelper output;
@@ -13,7 +14,7 @@ public class DefineCaseSensitiveTest
     }
 
     [Fact]
-    [Trait("Category", "CompileParse")]
+    [Trait("Category", "ParseCompileCmd")]
     public void DiscoveryStage_CaseSensitiveFlags()
     {
         string oDotCmdFilePath = Path.Combine(
@@ -24,7 +25,7 @@ public class DefineCaseSensitiveTest
         // -D (define a macro) and -d are different features
         // same with -U (udefine a macro) and -u (undefine a symbol such as function or variable at link time)
 
-        NormalCommandResult expected = new(
+        NormalCommandDTO expected = new(
             includeTokens: [],
             orderedSymbolDefineTokens: ["-D", "BBB", "-UBBB"],
             otherTokens: ["-d", "AAA", "-uBBB", "-fake1", "-fake2", "-u", "AAA", "-fake3", "-dXXX"],
@@ -35,7 +36,13 @@ public class DefineCaseSensitiveTest
 
         );
 
-        Assert.Equal(expected, new NormalCompilationCommandParser().ParseCommand(oDotCmdFilePath));
+        var actualResult = new NormalCompilationCommandParser().ParseCommand(oDotCmdFilePath);
+        if (!actualResult.IsSuccess)
+        {
+            Assert.Fail(((ErrorUnikraftScanner<string>)actualResult.Error).Data);
+        }
+
+        Assert.Equal(expected, actualResult.Value);
     }
 
    

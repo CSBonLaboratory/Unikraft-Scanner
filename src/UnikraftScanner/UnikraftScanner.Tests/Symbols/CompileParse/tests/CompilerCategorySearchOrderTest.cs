@@ -3,6 +3,8 @@
 using Xunit.Abstractions;
 using UnikraftScanner.Client.Symbols;
 using System.Reflection;
+using UnikraftScanner.Client.Helpers;
+
 public class CompilerCategorySearchOrderTest
 {
     private readonly ITestOutputHelper output;
@@ -13,14 +15,14 @@ public class CompilerCategorySearchOrderTest
     }
 
     [Fact]
-    [Trait("Category", "CompileParse")]
+    [Trait("Category", "ParseCompileCmd")]
     public void PlusPlusFirst()
     {
         string oDotCmdFilePath = Path.Combine(
             Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),
             "../../../Symbols/inputs/compiler_category_search_order.o.cmd");
 
-        NormalCommandResult expected = new(
+        NormalCommandDTO expected = new(
             includeTokens: [],
             orderedSymbolDefineTokens: [],
             otherTokens: ["-c", "/home/crypto/main.c", "-o", "/home/crypto/main.o"],
@@ -31,8 +33,12 @@ public class CompilerCategorySearchOrderTest
 
         );
 
-        Assert.Equal(expected, new NormalCompilationCommandParser().ParseCommand(oDotCmdFilePath));
+        var actualResult = new NormalCompilationCommandParser().ParseCommand(oDotCmdFilePath);
+        if (!actualResult.IsSuccess)
+        {
+            Assert.Fail(((ErrorUnikraftScanner<string>)actualResult.Error).Data);
+        }
 
-
+        Assert.Equal(expected, actualResult.Value);
     }
 }
