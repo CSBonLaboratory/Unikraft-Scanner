@@ -5,12 +5,16 @@ using System.Reflection;
 using UnikraftScanner.Client.Helpers;
 using Xunit.Abstractions;
 
-public class SimpleElse : BaseSymbolTest
+[Collection(nameof(SymbolEngineTestParallel))]
+public class SimpleElse
 {
-    public SimpleElse(PrepSymbolTestEnv fix, ITestOutputHelper output) : base(fix){
-        this.output = output;
-    }
+    private PrepSymbolTestEnvFixture SymbolTestEnv { get; set; }
     private readonly ITestOutputHelper output;
+    public SimpleElse(PrepSymbolTestEnvFixture fix, ITestOutputHelper output)
+    {
+        this.output = output;
+        SymbolTestEnv = fix;
+    }
 
     [Fact]
     [Trait("Category", "DiscoveryStage")]
@@ -44,7 +48,7 @@ public class SimpleElse : BaseSymbolTest
             );
         }
 
-        SymbolEngine.EngineDTO actual = actualResult.Value;
+        SymbolEngine.DiscoveryResDTO actual = actualResult.Value;
 
         var expected = new List<CompilationBlock>{
                 new CompilationBlock(
@@ -228,7 +232,7 @@ public class SimpleElse : BaseSymbolTest
             actual.debugUniveralLinesOfCodeIdxs
         );
 
-        
+
 
         AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
     }

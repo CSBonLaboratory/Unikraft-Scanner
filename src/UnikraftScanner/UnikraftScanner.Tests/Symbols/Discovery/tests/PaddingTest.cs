@@ -4,12 +4,17 @@ using System.IO;
 using System.Reflection;
 using UnikraftScanner.Client.Helpers;
 using Xunit.Abstractions;
-public class PaddingTest : BaseSymbolTest
+
+[Collection(nameof(SymbolEngineTestParallel))]
+public class PaddingTest
 {
-    public PaddingTest(PrepSymbolTestEnv fix, ITestOutputHelper output) : base(fix){
-        this.output = output;
-    }
+    private PrepSymbolTestEnvFixture SymbolTestEnv { get; set; }
     private readonly ITestOutputHelper output;
+    public PaddingTest(PrepSymbolTestEnvFixture fix, ITestOutputHelper output)
+    {
+        this.output = output;
+        SymbolTestEnv = fix;
+    }
 
     [Fact]
     [Trait("Category", "DiscoveryStage")]
@@ -33,7 +38,7 @@ public class PaddingTest : BaseSymbolTest
             );
         }
 
-        SymbolEngine.EngineDTO actual = actualResult.Value;
+        SymbolEngine.DiscoveryResDTO actual = actualResult.Value;
 
         var expected = new List<CompilationBlock>{
             
@@ -85,7 +90,7 @@ public class PaddingTest : BaseSymbolTest
         };
 
         List<CompilationBlock> actualBlocks = actual.Blocks;
-        
+
         List<List<int>> expectedCodeLinesInBlocks = [
             [],
             [9, 11],
@@ -105,13 +110,13 @@ public class PaddingTest : BaseSymbolTest
             actualCodeLinesInBlocks
         );
 
-        
+
         AssertSymbolEngine.TestUniversalLinesOfCode(
             expectedUniversalLines,
             actual.debugUniveralLinesOfCodeIdxs
         );
 
-        
+
 
         AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
     }

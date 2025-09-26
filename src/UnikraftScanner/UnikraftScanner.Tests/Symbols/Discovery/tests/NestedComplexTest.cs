@@ -4,14 +4,18 @@ using System.IO;
 using System.Reflection;
 using UnikraftScanner.Client.Helpers;
 using Xunit.Abstractions;
-public class NestedComplexTest : BaseSymbolTest
-{
 
-    public NestedComplexTest(PrepSymbolTestEnv fix, ITestOutputHelper output) : base(fix){
-        this.output = output;
-    }
+[Collection(nameof(SymbolEngineTestParallel))]
+public class NestedComplexTest
+{
+    private PrepSymbolTestEnvFixture SymbolTestEnv { get; set; }
     private readonly ITestOutputHelper output;
-    
+    public NestedComplexTest(PrepSymbolTestEnvFixture fix, ITestOutputHelper output)
+    {
+        this.output = output;
+        SymbolTestEnv = fix;
+    }
+
     [Fact]
     [Trait("Category", "DiscoveryStage")]
     public void FindCompilationBlocks_Nested_Complex_SpaceBetweenHashtagAndDirective()
@@ -29,7 +33,7 @@ public class NestedComplexTest : BaseSymbolTest
             opts: SymbolTestEnv.Opts,
             targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath}"
             );
-        
+
         if (!actualResult.IsSuccess)
         {
             Assert.Fail(
@@ -37,7 +41,7 @@ public class NestedComplexTest : BaseSymbolTest
             );
         }
 
-        SymbolEngine.EngineDTO actual = actualResult.Value;
+        SymbolEngine.DiscoveryResDTO actual = actualResult.Value;
 
         var expected = new List<CompilationBlock>{
                 new CompilationBlock(
@@ -240,7 +244,7 @@ public class NestedComplexTest : BaseSymbolTest
             };
 
         List<CompilationBlock> actualBlocks = actual.Blocks;
-        
+
         List<List<int>> expectedCodeLinesInBlocks = Enumerable.Repeat(new List<int>(), expected.Count).ToList();
 
         List<List<int>> actualCodeLinesInBlocks = actual.debugLinesOfCodeBlocks;

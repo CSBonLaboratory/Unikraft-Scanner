@@ -65,13 +65,14 @@ internal class CompilerPlugin
 
     }
 
+    
     public ResultUnikraftScanner<string[]> ExecutePlugin()
     {
 
         var generalInterceptor = Process.Start(_plugin);
 
         string interceptOut = generalInterceptor.StandardOutput.ReadToEnd();
-        Console.WriteLine(generalInterceptor.StandardError.ReadToEnd());
+        string stderr = generalInterceptor.StandardError.ReadToEnd();
 
         generalInterceptor.WaitForExit();
 
@@ -80,7 +81,7 @@ internal class CompilerPlugin
             return ResultUnikraftScanner<string[]>.Failure(
 
                 new ErrorUnikraftScanner<string>(
-                    $"Plugin execution failed with exit code {generalInterceptor.ExitCode}",
+                    $"Plugin execution failed with exit code {generalInterceptor.ExitCode}\n{stderr}",
                     ErrorTypes.CompilationInPluginFailure
                 )
             );

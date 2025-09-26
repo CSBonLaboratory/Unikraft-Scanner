@@ -5,13 +5,20 @@ using System.Reflection;
 using UnikraftScanner.Client.Helpers;
 using Xunit.Abstractions;
 
-public class MultiLineTest : BaseSymbolTest
+[Collection(nameof(SymbolEngineTestParallel))]
+public class MultiLineTest
 {
-    public MultiLineTest(PrepSymbolTestEnv fix, ITestOutputHelper output) : base(fix){
-        this.output = output;
-    }
+
+    private PrepSymbolTestEnvFixture SymbolTestEnv { get; set; }
+
     private readonly ITestOutputHelper output;
 
+    public MultiLineTest(PrepSymbolTestEnvFixture fix, ITestOutputHelper output)
+    {
+        SymbolTestEnv = fix;
+        this.output = output;
+    }
+    
     [Fact]
     [Trait("Category", "DiscoveryStage")]
     public void FindCompilationBlocks_MultilineDirectives_Paranthesis_MultiSpace_And_Code()
@@ -41,7 +48,7 @@ public class MultiLineTest : BaseSymbolTest
             );
         }
 
-        SymbolEngine.EngineDTO actual = actualResult.Value;
+        SymbolEngine.DiscoveryResDTO actual = actualResult.Value;
 
 
         List<CompilationBlock> expected = new List<CompilationBlock>{

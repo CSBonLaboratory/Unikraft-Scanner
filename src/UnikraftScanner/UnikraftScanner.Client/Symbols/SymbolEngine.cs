@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 public partial class SymbolEngine
 {
-    public record EngineDTO(
+    public record DiscoveryResDTO(
         List<CompilationBlock> Blocks, int UniversalLinesOfCode,
         List<int> debugUniveralLinesOfCodeIdxs,  // used only for debugging in testing the lines of code
         List<List<int>> debugLinesOfCodeBlocks   // used only for debugging in testing the lines of code, decouple it from Compilation Blocks class
@@ -20,7 +20,11 @@ public partial class SymbolEngine
     // [StartLineEnd, EndLine] interval
     // these intervals are also non-overlaping so no confusion in sorting
     // you can compare them to root nodes of a forest data structure
-    private List<int> orphanBlocksCounterCache;
+    private List<int>? orphanBlocksCounterCache;
+
+    // cache used during trigger stage to find all idnexes of compilation blocks that are compiled
+    // else blocks behave differently since the plugin does not show their evaluation status so we need to deduct ourselves this info
+    private List<int>? elseBlocksCounterCache;
 
     private string RemoveComments(string sourceFileRawContent)
     {
@@ -164,51 +168,26 @@ public partial class SymbolEngine
         foundBlocks.RemoveAt(0);
     }
 
-    // public int[]? TriggerCompilationBlocks(List<CompilationBlock> discoveredBlocksOrdered, PluginOptions opts, string targetCompilationCommand)
-    // {
-    //     List<int> activeBlocksIdxs = new();
-
-    //     string[] rawBlocks = new CompilerPlugin(targetCompilationCommand, opts).ExecutePlugin();
-
-    //     Dictionary<int, bool> incompleteTriggeredBlocksStartLine = new();
-
-    //     foreach (string block in rawBlocks)
-    //     {
-    //         string[] blockInfoLines = block.Split("\n");
-
-    //         CompilationBlockTypes directiveType = (CompilationBlockTypes)int.Parse(blockInfoLines[0].Split()[0]);
-
-    //         if (directiveType == CompilationBlockTypes.ENDIF || directiveType == CompilationBlockTypes.ELSE)
-    //             continue;
-
-    //         int startLine = int.Parse(blockInfoLines[0].Split()[2]);
-
-    //         bool evalType = bool.Parse(blockInfoLines[^1].Split(" ")[1]);
-
-    //         if (evalType == true)
-    //         {
-    //             incompleteTriggeredBlocksStartLine.Add(startLine, true);
-    //         }
-    //     }
-
-    //     Queue<CompilationBlock> traverseNodes = new(discoveredBlocksOrdered.Where(cb => cb.ParentCounter == -1).ToList());
-
-    //     while (traverseNodes.Count > 0)
-    //     {
-    //         CompilationBlock current 
-    //     }
-
-    // }
-    public ResultUnikraftScanner<EngineDTO> DiscoverCompilationBlocksAndLines(string sourceFileAbsPath, PluginOptions opts, string targetCompilationCommand)
+    
+    public ResultUnikraftScanner<DiscoveryResDTO> DiscoverCompilationBlocksAndLines(string sourceFileAbsPath, PluginOptions opts, string targetCompilationCommand)
     {
         if (opts.Stage_RetainExcludedBlocks_Internal_PluginParam != PluginStage.Discovery)
         {
-            return null;
+            return ResultUnikraftScanner<DiscoveryResDTO>.Failure(
+                new ErrorUnikraftScanner<string>(
+                    $"Plugin for source file {sourceFileAbsPath} was put in {opts.Stage_RetainExcludedBlocks_Internal_PluginParam} instead of {PluginStage.Discovery}",
+                    ErrorTypes.WrongPluginPhase
+                )
+            );
         }
+
         List<CompilationBlock> foundBlocks = new();
 
         // since this method is used only once on a source file we need to reset the cache
         orphanBlocksCounterCache = new List<int>();
+
+        // used as a cache for the trigger stage
+        elseBlocksCounterCache = new List<int>();
 
         // remove comments before executing the compiler in order to not count them as code lines
         List<string> sourceLines = RemoveComments(File.ReadAllText(sourceFileAbsPath)).Split("\n").ToList();
@@ -219,7 +198,7 @@ public partial class SymbolEngine
 
         if (!compilerResult.IsSuccess)
         {
-            return ResultUnikraftScanner<EngineDTO>.Failure(compilerResult.Error);
+            return ResultUnikraftScanner<DiscoveryResDTO>.Failure(compilerResult.Error);
         }
 
         string[] rawBlocks = compilerResult.Value;
@@ -244,108 +223,113 @@ public partial class SymbolEngine
             ResultUnikraftScanner<ParseCoordsDTO> res =
                 ParseBlockBounds(startLine, startLineEnd, endLine, directiveType, blockInfoLines, sourceLines);
             
-                if (res.IsSuccess)
-                {
-                    startLine = res.Value.StartLine;
-                    startLineEnd = res.Value.StartLineEnd;
-                    endLine = res.Value.EndLine;
-                }
-                else
-                {
-                    return ResultUnikraftScanner<EngineDTO>.Failure(res.Error);
-                }
+            if (res.IsSuccess)
+            {
+                startLine = res.Value.StartLine;
+                startLineEnd = res.Value.StartLineEnd;
+                endLine = res.Value.EndLine;
+            }
+            else
+            {
+                return ResultUnikraftScanner<DiscoveryResDTO>.Failure(res.Error);
+            }
 
             if (directiveType == CompilationBlockTypes.ENDIF)
+            {
+
+                CompilationBlock endingBlock = openedBlocks.Pop();
+
+                endingBlock.EndLine = endLine;
+
+                foundBlocks.Add(endingBlock);
+            }
+            else if (new[] { CompilationBlockTypes.IF, CompilationBlockTypes.IFDEF, CompilationBlockTypes.IFNDEF }.Contains(directiveType))
+            {
+
+                // see if current block has a parent and then link each other
+                if (openedBlocks.Count > 0)
                 {
+                    CompilationBlock parentBlock = openedBlocks.Peek();
 
-                    CompilationBlock endingBlock = openedBlocks.Pop();
+                    if (parentBlock.Children == null)
+                        parentBlock.Children = new List<int>() { blockCounter };
+                    else
+                        parentBlock.Children.Add(blockCounter);
 
-                    endingBlock.EndLine = endLine;
 
-                    foundBlocks.Add(endingBlock);
+                    parentCounter = parentBlock.BlockCounter;
+
                 }
-                else if (new[] { CompilationBlockTypes.IF, CompilationBlockTypes.IFDEF, CompilationBlockTypes.IFNDEF }.Contains(directiveType))
+
+                CompilationBlock currentBlock = new CompilationBlock(
+                    type: directiveType,
+                    condition: LexCondition(directiveType, sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
+                    startLine: startLine,
+                    blockCounter: blockCounter,
+                    startLineEnd: startLineEnd,
+                    // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
+                    endLine: -1,
+                    parentCounter: parentCounter);
+
+                openedBlocks.Push(currentBlock);
+
+                // this block would be a child of a root "fake" compilation block that contains the entire source file
+                if (parentCounter == -1)
                 {
+                    orphanBlocksCounterCache.Add(blockCounter);
+                }
 
-                    // see if current block has a parent and then link each other
-                    if (openedBlocks.Count > 0)
-                    {
-                        CompilationBlock parentBlock = openedBlocks.Peek();
+                blockCounter++;
 
-                        if (parentBlock.Children == null)
-                            parentBlock.Children = new List<int>() { blockCounter };
-                        else
-                            parentBlock.Children.Add(blockCounter);
+            }
+            else if (new[] { CompilationBlockTypes.ELIF, CompilationBlockTypes.ELSE }.Contains(directiveType))
+            {
+                   
+                // finalize processing previous branch block (a previous elif, if, ifndef, ifdef)
+                CompilationBlock siblingBlock = openedBlocks.Pop();
 
+                siblingBlock.EndLine = startLine;
+                foundBlocks.Add(siblingBlock);
+
+                // see if current block has a parent and then link each other
+                if (openedBlocks.Count > 0)
+                {
+                    CompilationBlock parentBlock = openedBlocks.Peek();
+
+                    if (parentBlock.Children == null)
+                        parentBlock.Children = new List<int>() { blockCounter };
+                    else
+                        parentBlock.Children.Add(blockCounter);
 
                         parentCounter = parentBlock.BlockCounter;
+                }
 
-                    }
+                CompilationBlock currentBlock = new CompilationBlock(
+                    type: directiveType,
+                    LexCondition(directiveType, sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
+                    startLine: startLine,
+                    blockCounter: blockCounter,
+                    startLineEnd: startLineEnd,
+                    // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
+                    endLine: -1,
+                    parentCounter: parentCounter
+                );
+                openedBlocks.Push(currentBlock);
 
-                    CompilationBlock currentBlock = new CompilationBlock(
-                        type: directiveType,
-                        condition: LexCondition(directiveType, sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
-                        startLine: startLine,
-                        blockCounter: blockCounter,
-                        startLineEnd: startLineEnd,
-                        // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
-                        endLine: -1,
-                        parentCounter: parentCounter);
+                // cache used for Trigger Stage since ELSE blocks behave different than other blocks when it comes to trigger state 
+                // returned by the plugin
+                if (directiveType == CompilationBlockTypes.ELSE)
+                    elseBlocksCounterCache.Add(currentBlock.BlockCounter);
 
-                    openedBlocks.Push(currentBlock);
-
-                    // this block would be a child of a root "fake" compilation block that contains the entire source file
-                    if (parentCounter == -1)
-                    {
-                        orphanBlocksCounterCache.Add(blockCounter);
-                    }
+                // this block would be a child of a root "fake" compilation block that contains the entire source file
+                if (parentCounter == -1)
+                {
+                    orphanBlocksCounterCache.Add(blockCounter);
+                }
 
                     blockCounter++;
 
-                }
-                else if (new[] { CompilationBlockTypes.ELIF, CompilationBlockTypes.ELSE }.Contains(directiveType))
-                {
-
-                    // finalize processing previous branch block (a previous elif, if, ifndef, ifdef)
-                    CompilationBlock siblingBlock = openedBlocks.Pop();
-
-                    siblingBlock.EndLine = startLine;
-                    foundBlocks.Add(siblingBlock);
-
-                    // see if current block has a parent and then link each other
-                    if (openedBlocks.Count > 0)
-                    {
-                        CompilationBlock parentBlock = openedBlocks.Peek();
-
-                        if (parentBlock.Children == null)
-                            parentBlock.Children = new List<int>() { blockCounter };
-                        else
-                            parentBlock.Children.Add(blockCounter);
-
-                        parentCounter = parentBlock.BlockCounter;
-                    }
-
-                    CompilationBlock currentBlock = new CompilationBlock(
-                        type: directiveType,
-                        LexCondition(directiveType, sourceLines.Slice(startLine, startLineEnd - startLine + 1)),
-                        startLine: startLine,
-                        blockCounter: blockCounter,
-                        startLineEnd: startLineEnd,
-                        // end line is incomplete, we will add it when we encounter the next sibling block (else, elif) or the end (endif)
-                        endLine: -1,
-                        parentCounter: parentCounter
-                    );
-                    openedBlocks.Push(currentBlock);
-
-                    // this block would be a child of a root "fake" compilation block that contains the entire source file
-                    if (parentCounter == -1)
-                    {
-                        orphanBlocksCounterCache.Add(blockCounter);
-                    }
-
-                    blockCounter++;
-
-                }
+            }
 
         }
 
@@ -362,7 +346,7 @@ public partial class SymbolEngine
 
         CountLinesOfCodeInSourceFile(sourceLines, foundBlocks, ref universalLinesOfCode, debugUniversalLinesOfCodeIdxs, debugLinesOfCodeBlocks);
 
-        return (ResultUnikraftScanner<EngineDTO>)new EngineDTO(foundBlocks, universalLinesOfCode, debugUniversalLinesOfCodeIdxs, debugLinesOfCodeBlocks);
+        return (ResultUnikraftScanner<DiscoveryResDTO>)new DiscoveryResDTO(foundBlocks, universalLinesOfCode, debugUniversalLinesOfCodeIdxs, debugLinesOfCodeBlocks);
     }
 
 

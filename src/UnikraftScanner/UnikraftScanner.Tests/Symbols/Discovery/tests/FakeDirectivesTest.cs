@@ -5,13 +5,17 @@ using System.Reflection;
 using UnikraftScanner.Client.Helpers;
 using Xunit.Abstractions;
 
-public class FakeDirectivesTest : BaseSymbolTest
+[Collection(nameof(SymbolEngineTestParallel))]
+public class FakeDirectivesTest
 {
-    public FakeDirectivesTest(PrepSymbolTestEnv fix, ITestOutputHelper output) : base(fix){
-        this.output = output;
-    }
+    private PrepSymbolTestEnvFixture SymbolTestEnv { get; set; }
     private readonly ITestOutputHelper output;
-
+    public FakeDirectivesTest(PrepSymbolTestEnvFixture fix, ITestOutputHelper output)
+    {
+        this.output = output;
+        SymbolTestEnv = fix;
+    }
+    
     [Fact]
     [Trait("Category", "DiscoveryStage")]
     public void FindCompilationBlocks_Comments_CodeMultiLine_DirectivesAsStringsAndVariables()
@@ -49,7 +53,7 @@ public class FakeDirectivesTest : BaseSymbolTest
             );
         }
 
-        SymbolEngine.EngineDTO actual = actualResult.Value;
+        SymbolEngine.DiscoveryResDTO actual = actualResult.Value;
 
         List<CompilationBlock> expected = [
 
@@ -102,7 +106,7 @@ public class FakeDirectivesTest : BaseSymbolTest
             actual.debugUniveralLinesOfCodeIdxs
         );
 
-        
+
         AssertSymbolEngine.TestLinesOfCodeInBlocks(expectedCodeLinesInBlocks, actualCodeLinesInBlocks);
 
 

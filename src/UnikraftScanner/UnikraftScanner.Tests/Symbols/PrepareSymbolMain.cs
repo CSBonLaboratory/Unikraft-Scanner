@@ -1,6 +1,4 @@
 ﻿namespace UnikraftScanner.Tests;
-
-using UnikraftScanner.Client;
 using Xunit;
 using System.IO;
 using System.Diagnostics;
@@ -8,10 +6,54 @@ using System.Reflection;
 using System.Text;
 using Xunit.Abstractions;
 using UnikraftScanner.Client.Symbols;
+using System.Collections.Concurrent;
 
 public class AssertSymbolEngine : Assert
 {
 
+    public static void TestTriggeredIndexes(int[] actual, int[] expected)
+    {
+        StringBuilder cachedErrorMsg = new();
+        if (actual.Length != expected.Length)
+        {
+            cachedErrorMsg.Append($"List different sizes: Actual ({actual.Length}) VS Expected ({expected.Length})\n");
+            cachedErrorMsg.Append("Actual:   ");
+            foreach (int a in actual)
+            {
+                cachedErrorMsg.Append($" {a}");
+            }
+
+            cachedErrorMsg.Append("\n");
+            cachedErrorMsg.Append("Expected: ");
+            foreach (int e in expected)
+            {
+                cachedErrorMsg.Append($" {e}");
+            }
+
+            Assert.Fail(cachedErrorMsg.ToString());
+        }
+
+        for (int i = 0; i < expected.Length; i++)
+        {
+            if (actual[i] != expected[i])
+            {
+                cachedErrorMsg.Append("Actual: ");
+                foreach (int a in actual)
+                {
+                    cachedErrorMsg.Append($" {a}");
+                }
+
+                cachedErrorMsg.Append("\n");
+                cachedErrorMsg.Append("Expected: ");
+                foreach (int e in expected)
+                {
+                    cachedErrorMsg.Append($" {e}");
+                }
+
+                Assert.Fail(cachedErrorMsg.ToString());
+            }
+        }
+    }
     public static void TestLinesOfCodeInBlocks(List<List<int>> expected, List<List<int>> actual, bool failAfterFirst = false)
     {
         StringBuilder cachedErrorMsg = new();
@@ -119,7 +161,7 @@ public class AssertSymbolEngine : Assert
     }
 }
 
-public class PrepSymbolTestEnv : IDisposable
+public class PrepSymbolTestEnvFixture : IDisposable
 {
     private string prevPWD;
 
@@ -127,9 +169,8 @@ public class PrepSymbolTestEnv : IDisposable
 
     public PluginOptions Opts { get; init; }
 
-    public PrepSymbolTestEnv(IMessageSink diagnosticMessageSink)
+    public PrepSymbolTestEnvFixture(IMessageSink diagnosticMessageSink)
     {
-
         this.diagnosticMessageSink = diagnosticMessageSink;
 
         string unikraftTestsProjectRootPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../..");
@@ -159,10 +200,12 @@ public class PrepSymbolTestEnv : IDisposable
 
         prepareTestEnvironment.Start();
 
-        Console.WriteLine(prepareTestEnvironment.StandardError.ReadToEnd());
+        prepareTestEnvironment.StandardError.ReadToEnd();
+
+        prepareTestEnvironment.WaitForExit();
 
         if (prepareTestEnvironment.ExitCode != 0)
-        {   
+        {
             throw new InvalidOperationException($"Make command for building plugin failed with exit code {prepareTestEnvironment.ExitCode}");
         }
             
@@ -186,12 +229,71 @@ public class PrepSymbolTestEnv : IDisposable
 
 }
 
-public class BaseSymbolTest : IClassFixture<PrepSymbolTestEnv>{
+[CollectionDefinition(nameof(SymbolEngineTestParallel))]
+public class SymbolEngineTestParallel : ICollectionFixture<PrepSymbolTestEnvFixture>{}
 
-    protected PrepSymbolTestEnv SymbolTestEnv {get; set;}
+public class ParalelTriggerStageCacheHelper
+{
+    // class used for trigger stage tests that use same source file as input
+    // it does the discovery stage only once and caches the result for other tests that are run in paralel
+    private static ConcurrentDictionary<string, Lazy<KeyValuePair<SymbolEngine, SymbolEngine.DiscoveryResDTO>>> cachedDiscoveryInputs = new();
+    
+    // prepare discovery stage for tests that use same input file
+    private KeyValuePair<SymbolEngine, SymbolEngine.DiscoveryResDTO> PrepareDiscoveryOnlyOnce(string inputPath, PrepSymbolTestEnvFixture symbolTestEnv)
+    {
+        // https://andrewlock.net/making-getoradd-on-concurrentdictionary-thread-safe-using-lazy/
+        var discoveryResult = ParalelTriggerStageCacheHelper.cachedDiscoveryInputs.GetOrAdd(inputPath,
+            x => new Lazy<KeyValuePair<SymbolEngine, SymbolEngine.DiscoveryResDTO>>(
+                () =>
+                {
 
-    public BaseSymbolTest(PrepSymbolTestEnv env){
-        SymbolTestEnv = env;
+                    SymbolEngine engine = new SymbolEngine();
+                    var discoveryResult = engine.DiscoverCompilationBlocksAndLines(
+                        inputPath,
+                        opts: symbolTestEnv.Opts,
+                        targetCompilationCommand: $"{symbolTestEnv.Opts.CompilerPath} -I/usr/include -c {inputPath}"
+                    );
+
+                    if (!discoveryResult.IsSuccess)
+                    {
+                        Assert.Fail(
+                        $"Failed with custom error: {discoveryResult.Error}"
+                        );
+                    }
+
+                    return new KeyValuePair<SymbolEngine, SymbolEngine.DiscoveryResDTO>(engine, discoveryResult.Value);
+                }));
+
+        return discoveryResult.Value;
     }
 
+    public void RunTriggerTest(string inputPath, string defineSymbolsCmd, int[] expectedBlockIdxs, PrepSymbolTestEnvFixture symbolTestEnv)
+    {
+        KeyValuePair<SymbolEngine, SymbolEngine.DiscoveryResDTO> discoveredEnv = PrepareDiscoveryOnlyOnce(inputPath, symbolTestEnv);
+        
+        // prepare for Trigger Stage
+        PluginOptions newOpts = new PluginOptions(
+            CompilerPath: symbolTestEnv.Opts.CompilerPath,
+            PluginPath: symbolTestEnv.Opts.PluginPath,
+            InterceptionResultsFilePath_External_PluginParam: symbolTestEnv.Opts.InterceptionResultsFilePath_External_PluginParam,
+            Stage_RetainExcludedBlocks_Internal_PluginParam: PluginStage.Trigger
+        );
+
+
+        var actualResult = discoveredEnv.Key.TriggerCompilationBlocks(
+            discoveredEnv.Value.Blocks,
+            newOpts,
+            $"{symbolTestEnv.Opts.CompilerPath} {defineSymbolsCmd} -I/usr/include -c {inputPath}"
+        );
+
+
+        if (!actualResult.IsSuccess)
+        {
+            Assert.Fail(
+                $"Failed with custom error: {actualResult.Error}"
+            );
+        }
+
+        AssertSymbolEngine.TestTriggeredIndexes(actualResult.Value, expectedBlockIdxs);
+    }
 }

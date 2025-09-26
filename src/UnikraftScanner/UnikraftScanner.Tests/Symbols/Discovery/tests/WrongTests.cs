@@ -2,17 +2,18 @@
 using UnikraftScanner.Client.Symbols;
 using System.IO;
 using System.Reflection;
-using UnikraftScanner.Client.Helpers;
 using Xunit.Abstractions;
 using UnikraftScanner.Client;
 
-public class CompilationErrorTest : BaseSymbolTest
+[Collection(nameof(SymbolEngineTestParallel))]
+public class CompilationErrorTest
 {
     private readonly ITestOutputHelper output;
-
-    public CompilationErrorTest(PrepSymbolTestEnv fix, ITestOutputHelper output) : base(fix)
+    private PrepSymbolTestEnvFixture SymbolTestEnv { get; set; }
+    public CompilationErrorTest(PrepSymbolTestEnvFixture fix, ITestOutputHelper output)
     {
         this.output = output;
+        SymbolTestEnv = fix;
     }
 
     [Theory]
@@ -66,7 +67,7 @@ public class CompilationErrorTest : BaseSymbolTest
     public void FindCompilatioBlocks_CompileError()
     {
         string sourceFileAbsPath = Path.Combine(
-            Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), $"../../../Symbols/Discovery/inputs/compilation_error");
+            Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), $"../../../Symbols/Discovery/inputs/compilation_error.c");
 
         var actual = new SymbolEngine().DiscoverCompilationBlocksAndLines(
             sourceFileAbsPath,

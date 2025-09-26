@@ -5,12 +5,16 @@ using System.Reflection;
 using UnikraftScanner.Client.Helpers;
 using Xunit.Abstractions;
 
-public class ExpandTest : BaseSymbolTest
+[Collection(nameof(SymbolEngineTestParallel))]
+public class ExpandTest
 {
     private readonly ITestOutputHelper output;
+    private PrepSymbolTestEnvFixture SymbolTestEnv { get; set; }
 
-    public  ExpandTest(PrepSymbolTestEnv fix, ITestOutputHelper output) : base(fix){
+    public ExpandTest(PrepSymbolTestEnvFixture fix, ITestOutputHelper output)
+    {
         this.output = output;
+        SymbolTestEnv = fix;
     }
 
     [Fact]
@@ -36,7 +40,7 @@ public class ExpandTest : BaseSymbolTest
             );
         }
 
-        SymbolEngine.EngineDTO actual = actualResult.Value;
+        SymbolEngine.DiscoveryResDTO actual = actualResult.Value;
 
         List<CompilationBlock> expected = [
 
