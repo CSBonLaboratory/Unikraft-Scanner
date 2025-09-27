@@ -21,7 +21,7 @@ public class TriggerMassive_AEF
     {
 
         /*
-        Test that goes as deep as possible in the first branch where else are true but also contain siblings which are true that take priority
+        Test that goes as deep as possible in the first branch where else are true but also contain siblings which are true that take priority and some outside blocks
         */
         string defineSymbolsCmd = "-DA -DE -DF";
 
@@ -34,7 +34,7 @@ public class TriggerMassive_AEF
             $"../../../Symbols/Trigger/inputs/trigger_massive.c"
         );
 
-        Helper.RunTriggerTest(inputPath, defineSymbolsCmd, expected, SymbolTestEnv);
+        Helper.RunTriggerTest(inputPath, defineSymbolsCmd, expected, SymbolTestEnv, $"trigger_results_{this.GetType().Name}.txt");
 
     }
 }

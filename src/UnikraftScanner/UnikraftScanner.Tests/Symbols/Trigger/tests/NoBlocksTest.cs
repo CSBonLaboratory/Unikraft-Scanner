@@ -32,7 +32,7 @@ public class NoBlocks
             $"../../../Symbols/Trigger/inputs/no_blocks.c"
         );
 
-        Helper.RunTriggerTest(inputPath, defineSymbolsCmd, expected, SymbolTestEnv);
+        Helper.RunTriggerTest(inputPath, defineSymbolsCmd, expected, SymbolTestEnv, $"trigger_results_{this.GetType().Name}.txt");
 
     }
 }

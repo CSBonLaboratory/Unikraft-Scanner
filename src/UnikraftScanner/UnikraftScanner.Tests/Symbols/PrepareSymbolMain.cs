@@ -165,6 +165,8 @@ public class PrepSymbolTestEnvFixture : IDisposable
 {
     private string prevPWD;
 
+    private string unikraftTestsProjectRootPath;
+
     private readonly IMessageSink diagnosticMessageSink;
 
     public PluginOptions Opts { get; init; }
@@ -173,15 +175,15 @@ public class PrepSymbolTestEnvFixture : IDisposable
     {
         this.diagnosticMessageSink = diagnosticMessageSink;
 
-        string unikraftTestsProjectRootPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../..");
+        this.unikraftTestsProjectRootPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../..");
 
         string unikraftClientRootPath = Path.Combine(unikraftTestsProjectRootPath, "../UnikraftScanner.Client");
 
         Opts = new PluginOptions(
             CompilerPath: "/usr/bin/clang-18",
-            PluginPath: Path.Combine(unikraftTestsProjectRootPath, "Symbols/dependencies/TestPluginBlockFinder.so"),
-            InterceptionResultsFilePath_External_PluginParam: Path.Combine(unikraftTestsProjectRootPath, "Symbols/dependencies/discovery_results.txt"),
-            PluginStage.Discovery
+            PluginPath: Path.Combine(unikraftTestsProjectRootPath, "Symbols/.artifacts/TestPluginBlockFinder.so"),
+            InterceptionResultsFilePath_External_PluginParam: Path.Combine(unikraftTestsProjectRootPath, "Symbols/.artifacts/discovery_results.txt"),
+            Stage_RetainExcludedBlocks_Internal_PluginParam: PluginStage.Discovery
         );
 
         prevPWD = Directory.GetCurrentDirectory();
@@ -190,7 +192,7 @@ public class PrepSymbolTestEnvFixture : IDisposable
         Directory.SetCurrentDirectory(
             Path.Combine(
                 unikraftClientRootPath,
-                "Symbols")
+                "Symbols/Plugin")
         );
 
         Process prepareTestEnvironment = new Process();
@@ -211,7 +213,7 @@ public class PrepSymbolTestEnvFixture : IDisposable
             
         // move the plugin library to tests project
         File.Copy(
-            sourceFileName: Path.Combine(unikraftClientRootPath, "Symbols/bin/BlockFinderPlugin.so"),
+            sourceFileName: Path.Combine(unikraftClientRootPath, "Symbols/Plugin/bin/BlockFinderPlugin.so"),
             destFileName: Opts.PluginPath,
             overwrite: true
         );
@@ -221,7 +223,12 @@ public class PrepSymbolTestEnvFixture : IDisposable
     public void Dispose()
     {
 
-        //File.Delete("./dependencies/TestPluginBlockFinder.so");
+        DirectoryInfo artifactDir = new DirectoryInfo(Path.Combine(unikraftTestsProjectRootPath, "Symbols/.artifacts"));
+
+        foreach (FileInfo file in artifactDir.GetFiles())
+        {
+            file.Delete(); 
+        }
 
         Directory.SetCurrentDirectory(prevPWD);
 
@@ -267,15 +274,19 @@ public class ParalelTriggerStageCacheHelper
         return discoveryResult.Value;
     }
 
-    public void RunTriggerTest(string inputPath, string defineSymbolsCmd, int[] expectedBlockIdxs, PrepSymbolTestEnvFixture symbolTestEnv)
+    public void RunTriggerTest(string inputPath, string defineSymbolsCmd, int[] expectedBlockIdxs, PrepSymbolTestEnvFixture symbolTestEnv, string overWriteResultsFilename)
     {
         KeyValuePair<SymbolEngine, SymbolEngine.DiscoveryResDTO> discoveredEnv = PrepareDiscoveryOnlyOnce(inputPath, symbolTestEnv);
-        
+
         // prepare for Trigger Stage
         PluginOptions newOpts = new PluginOptions(
             CompilerPath: symbolTestEnv.Opts.CompilerPath,
             PluginPath: symbolTestEnv.Opts.PluginPath,
-            InterceptionResultsFilePath_External_PluginParam: symbolTestEnv.Opts.InterceptionResultsFilePath_External_PluginParam,
+            
+            // if we use the same file from the discovery stage we will have a bottleneck since all parallel files will try to write to it
+            // this is why every Trigger stage test uses a results file that has the name of the test class
+
+            InterceptionResultsFilePath_External_PluginParam: overWriteResultsFilename,  
             Stage_RetainExcludedBlocks_Internal_PluginParam: PluginStage.Trigger
         );
 

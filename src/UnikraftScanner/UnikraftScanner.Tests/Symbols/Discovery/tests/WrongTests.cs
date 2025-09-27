@@ -42,10 +42,18 @@ public class CompilationErrorTest
         string sourceFileAbsPath = Path.Combine(
             Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), $"../../../Symbols/Discovery/inputs/{testNameFile}");
 
+        // optimization, remove bottleneck when running tests in parallel, where a single results file is used for all tests
+        string overwriteResultsFile = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), $"../../../Symbols/.artifacts/{this.GetType().Name}_{testNameFile}.txt");
 
+        PluginOptions newOpts = new PluginOptions(
+            CompilerPath: SymbolTestEnv.Opts.CompilerPath,
+            PluginPath: SymbolTestEnv.Opts.PluginPath,
+            InterceptionResultsFilePath_External_PluginParam: overwriteResultsFile,
+            Stage_RetainExcludedBlocks_Internal_PluginParam: SymbolTestEnv.Opts.Stage_RetainExcludedBlocks_Internal_PluginParam
+        );
         var actual = new SymbolEngine().DiscoverCompilationBlocksAndLines(
             sourceFileAbsPath,
-            opts: SymbolTestEnv.Opts,
+            opts: newOpts,
             targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath}"
         );
 

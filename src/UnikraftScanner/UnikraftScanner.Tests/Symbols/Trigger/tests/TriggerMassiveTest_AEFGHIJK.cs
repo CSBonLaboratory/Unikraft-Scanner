@@ -22,7 +22,7 @@ public class TriggerMassive_AEFGHIJK
     {
 
         /*
-        Test that goes half deep in a branch. H, I, J, K are useless defined symbols
+        Test that goes half deep in a branch. H, I, J, K are useless defined symbols and some outside blocks
         */
         string defineSymbolsCmd = "-DA -DE -DF -DG -DH -DI -DJ -DK";
 
@@ -33,7 +33,7 @@ public class TriggerMassive_AEFGHIJK
             $"../../../Symbols/Trigger/inputs/trigger_massive.c"
         );
 
-        Helper.RunTriggerTest(inputPath, defineSymbolsCmd, expected, SymbolTestEnv);
+        Helper.RunTriggerTest(inputPath, defineSymbolsCmd, expected, SymbolTestEnv, $"trigger_results_{this.GetType().Name}.txt");
 
     }
 }

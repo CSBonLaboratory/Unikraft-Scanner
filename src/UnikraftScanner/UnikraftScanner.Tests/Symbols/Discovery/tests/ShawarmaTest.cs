@@ -30,10 +30,20 @@ public class ShawarmaTest
             Comments on the same line as code statements
         */
         string sourceFileAbsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "../../../Symbols/Discovery/inputs/shawarma.c");
+
+        // optimization, remove bottleneck when running tests in parallel, where a single results file is used for all tests
+        string overwriteResultsFile = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), $"../../../Symbols/.artifacts/{this.GetType().Name}.txt");
+
+        PluginOptions newOpts = new PluginOptions(
+            CompilerPath: SymbolTestEnv.Opts.CompilerPath,
+            PluginPath: SymbolTestEnv.Opts.PluginPath,
+            InterceptionResultsFilePath_External_PluginParam: overwriteResultsFile,
+            Stage_RetainExcludedBlocks_Internal_PluginParam: SymbolTestEnv.Opts.Stage_RetainExcludedBlocks_Internal_PluginParam
+        );
         var actualResult = new SymbolEngine()
         .DiscoverCompilationBlocksAndLines(
             sourceFileAbsPath,
-            SymbolTestEnv.Opts,
+            newOpts,
             targetCompilationCommand: $"{SymbolTestEnv.Opts.CompilerPath} -I/usr/include -c {sourceFileAbsPath}"
             );
 

@@ -21,7 +21,7 @@ public class TriggerMassiveNoDefinesTest
     {
 
         /*
-        Test to see triggered blocks when no additional define flags are added
+        Test to see triggered blocks when no additional define flags are added and some outside blocks
         */
         string defineSymbolsCmd = "";
 
@@ -32,7 +32,7 @@ public class TriggerMassiveNoDefinesTest
             $"../../../Symbols/Trigger/inputs/trigger_massive.c"
         );
 
-        Helper.RunTriggerTest(inputPath, defineSymbolsCmd, expected, SymbolTestEnv);
+        Helper.RunTriggerTest(inputPath, defineSymbolsCmd, expected, SymbolTestEnv, $"trigger_results_{this.GetType().Name}.txt");
 
     }
 }
