@@ -22,6 +22,11 @@ int main(int argc, char* argv[]){
 
         std::string cmd_token(argv[i]);
         
+        // used to fix https://github.com/CSBonLaboratory/Unikraft-Scanner/issues/16
+        // the whole token is `-D__LIBUKLIBID_COMPILER__=Clang <version>` as it was alrady split by the argv mechanism
+        // a sneaky mistake would have been to consider the argument only `-D__LIBUKLIBID_COMPILER__=Clang` with no version substring
+        // since we have a space but that space is not considered in the tokenization split 
+        // because the original command passed to the command line as argument had double quotes "-D__LIBUKLIBID_COMPILER__=Clang <version>"
         if(cmd_token.find("-D__LIBUKLIBID_COMPILER__=") == 0){
             proxyCompileCmd += "-D__LIBUKLIBID_COMPILER__=";
             proxyCompileCmd += "\"";
