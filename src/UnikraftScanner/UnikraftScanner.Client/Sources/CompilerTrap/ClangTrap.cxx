@@ -1,0 +1,46 @@
+#include <string>
+#include <filesystem>
+#include <fstream>
+
+// Usage: <trap binary name> <path to results file> <arguments populated by the Unikraft Makefile and used in the compilation of a Unikraft source file>
+int main(int argc, char* argv[]){
+
+
+    // results file path passed from PrepCompilableSourcesEnvFixture then Makefile and used here
+    std::ofstream resultsOutput(RESULTS_FILE_PATH, std::ios::out | std::ios::app);
+
+    std::string proxyCompileCmd;
+
+    // instead of the trap compiler called by the Unikraft application's Makefile, we replace with the actual compiler which will
+    // do the normal work
+    // the define is passed from the Makefile which is passed from PrepCompilableSourcesEnvFixture 
+    proxyCompileCmd += HOST_COMPILER;
+
+    proxyCompileCmd += " ";
+
+    for(int i = 1; i < argc; i++){
+
+        std::string cmd_token(argv[i]);
+
+        
+        if(cmd_token.length() > 2){
+
+            std::string possible_source_path = cmd_token.substr(cmd_token.length() - 2, 2);
+
+            if(possible_source_path.compare(".c") == 0 && std::filesystem::exists(cmd_token)){
+                resultsOutput<< "SRC: " << cmd_token << "\n";
+            }
+        }
+
+        proxyCompileCmd += argv[i];
+        proxyCompileCmd += " ";
+        
+    }
+
+    resultsOutput<<"CMD: " << proxyCompileCmd;
+
+    resultsOutput<<"\n\n\n";
+    resultsOutput.close();
+    return system(proxyCompileCmd.c_str());
+
+}
