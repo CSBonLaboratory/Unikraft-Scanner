@@ -21,7 +21,17 @@ int main(int argc, char* argv[]){
     for(int i = 1; i < argc; i++){
 
         std::string cmd_token(argv[i]);
+        
+        if(cmd_token.find("-D__LIBUKLIBID_COMPILER__=") == 0){
+            proxyCompileCmd += "-D__LIBUKLIBID_COMPILER__=";
+            proxyCompileCmd += "\"";
+            proxyCompileCmd += cmd_token.substr(std::string("-D__LIBUKLIBID_COMPILER__=").length());
 
+            proxyCompileCmd += " ";
+            proxyCompileCmd += "\" ";
+
+            continue;
+        }
         
         if(cmd_token.length() > 2){
 
