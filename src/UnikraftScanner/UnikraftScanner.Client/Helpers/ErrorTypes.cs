@@ -8,5 +8,8 @@ public enum ErrorTypes
     UnknownCompilerFound,
     CFamillyCompilerNotFound,
     WrongPluginPhase,
-
+    KraftBuildProblem,
+    ElfloaderFetchProblem,
+    NoFetchWithGit,
+    MakefileBinCompatProblem
 }

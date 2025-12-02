@@ -27,6 +27,8 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+
+
 using namespace clang;
 using namespace llvm;
 
@@ -260,5 +262,5 @@ public:
     }
 };
 
-// Plugin name and description are hardcoded and it must also be in the SymbolEngine.FindCompilationBlocksAndLines
-static FrontendPluginRegistry::Add<MyFrontendAction> deployment("ConditionalBlockFinder", "Plugin used to find all preprocessor conditional blocks. Plugin used in SymbolEngine.cs");
+// these defines are passed from Makefile which are also passed from PrepSymbolTestEnvFixture
+static FrontendPluginRegistry::Add<MyFrontendAction> deployment(REGISTRY_NAME, REGISTRY_DESCRIPTION);

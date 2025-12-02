@@ -37,6 +37,7 @@ public class ShawarmaTest
         PluginOptions newOpts = new PluginOptions(
             CompilerPath: SymbolTestEnv.Opts.CompilerPath,
             PluginPath: SymbolTestEnv.Opts.PluginPath,
+            PluginName: SymbolTestEnv.Opts.PluginName,
             InterceptionResultsFilePath_External_PluginParam: overwriteResultsFile,
             Stage_RetainExcludedBlocks_Internal_PluginParam: SymbolTestEnv.Opts.Stage_RetainExcludedBlocks_Internal_PluginParam
         );

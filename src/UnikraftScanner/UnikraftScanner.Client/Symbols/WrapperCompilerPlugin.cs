@@ -12,6 +12,7 @@ public enum PluginStage
 public record PluginOptions(
     string CompilerPath,
     string PluginPath,
+    string PluginName,
     string InterceptionResultsFilePath_External_PluginParam,
     PluginStage Stage_RetainExcludedBlocks_Internal_PluginParam
     );
@@ -44,16 +45,16 @@ internal class CompilerPlugin
         _plugin.Arguments += " -Xclang -load";
         _plugin.Arguments += $" -Xclang {opts.PluginPath}";
         _plugin.Arguments += " -Xclang -plugin";
-        _plugin.Arguments += $" -Xclang ConditionalBlockFinder";
+        _plugin.Arguments += $" -Xclang {opts.PluginName}";
 
         // // pass where to put results about intercepted plugin blocks after plugin execution
-        _plugin.Arguments += $" -Xclang -plugin-arg-ConditionalBlockFinder";
+        _plugin.Arguments += $" -Xclang -plugin-arg-{opts.PluginName}";
         _plugin.Arguments += $" -Xclang {opts.InterceptionResultsFilePath_External_PluginParam}";
 
         // // should plugin parse conditional blocks inside a block that was evaluated as false
         // // for now, do not exclude them since we need to find all conditional blocks
         // // we will exclude them at the second stage when we need to find which ones are compiled
-        _plugin.Arguments += $" -Xclang -plugin-arg-ConditionalBlockFinder";
+        _plugin.Arguments += $" -Xclang -plugin-arg-{opts.PluginName}";
         _plugin.Arguments += $" -Xclang {opts.Stage_RetainExcludedBlocks_Internal_PluginParam}";
 
         Console.WriteLine(_plugin.Arguments);
@@ -87,6 +88,7 @@ internal class CompilerPlugin
             );
         }
 
+        Console.WriteLine(_opts.InterceptionResultsFilePath_External_PluginParam);
         string pluginResults = File.ReadAllText(_opts.InterceptionResultsFilePath_External_PluginParam);
 
         // no compilation blocks, so all code will be compiled no matter what

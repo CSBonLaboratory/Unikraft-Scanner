@@ -49,7 +49,7 @@ TW
 
 #ifndef OPR\
   STUV
-  char s[12] = "aa\
+  char s[32] = "aa\
            a";
 #endif 
 #if defined(A\
