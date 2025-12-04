@@ -11,6 +11,8 @@ int main(int argc, char* argv[]){
 
     std::string proxyCompileCmd;
 
+    std::string sourceFilePath;
+
     // instead of the trap compiler called by the Unikraft application's Makefile, we replace with the actual compiler which will
     // do the normal work
     // the define is passed from the Makefile which is passed from PrepCompilableSourcesEnvFixture 
@@ -40,10 +42,10 @@ int main(int argc, char* argv[]){
         
         if(cmd_token.length() > 2){
 
-            std::string possible_source_path = cmd_token.substr(cmd_token.length() - 2, 2);
+            std::string file_extension = cmd_token.substr(cmd_token.length() - 2, 2);
 
-            if(possible_source_path.compare(".c") == 0 && std::filesystem::exists(cmd_token)){
-                resultsOutput<< "SRC: " << cmd_token << "\n";
+            if(file_extension.compare(".c") == 0 && std::filesystem::exists(cmd_token)){
+                sourceFilePath = cmd_token;
             }
         }
 
@@ -52,9 +54,10 @@ int main(int argc, char* argv[]){
         
     }
 
-    resultsOutput<<"CMD: " << proxyCompileCmd;
+    resultsOutput<< "SRC: " << sourceFilePath  << "\n";
+    resultsOutput<< "CMD: "  << proxyCompileCmd << "\n";
+    resultsOutput<<"\n";
 
-    resultsOutput<<"\n\n\n";
     resultsOutput.close();
     return system(proxyCompileCmd.c_str());
 
