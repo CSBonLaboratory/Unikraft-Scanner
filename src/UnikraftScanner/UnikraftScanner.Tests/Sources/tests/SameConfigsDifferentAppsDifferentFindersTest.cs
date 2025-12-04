@@ -33,7 +33,7 @@ public class  SameConfigsDifferentAppsDifferentFindersTest : IClassFixture<PrepC
             kraftfilePath: Path.Combine(nginxPath, "Kraftfile"),
             kraftTarget: "--plat qemu --arch x86_64",
             appPath: nginxPath,
-            buildScriptFileName: CompilerTrapBincompatFinder.BuildScriptFileName,
+            buildScriptFileName: CompilerTrapBincompatFinder.ElfBuildScriptFileName,
             kconfigFilePath: Path.Combine(nginxPath, ".config.nginx_qemu-x86_64")
         );
 
@@ -41,7 +41,7 @@ public class  SameConfigsDifferentAppsDifferentFindersTest : IClassFixture<PrepC
         CompilerTrapBincompatFinder nginxCT = new(
             trapCompilerPath: SourcesTestEnv.TrapExePath,
             appPath: nginxPath,
-            resultsFilePath: $"{SourcesTestEnv.sourcesResultsFilePath}_nginx",
+            resultsFilePath: SourcesTestEnv.sourcesResultsFilePath,
             kraftfilePath: Path.Combine(nginxPath, "Kraftfile"),
             kraftTarget: "--plat qemu --arch x86_64",
             hostCompilerPath: SourcesTestEnv.hostCompilerPath,
@@ -62,14 +62,14 @@ public class  SameConfigsDifferentAppsDifferentFindersTest : IClassFixture<PrepC
             kraftfilePath: Path.Combine(nodePath, "Kraftfile"),
             kraftTarget: "--plat qemu --arch x86_64",
             appPath: nodePath,
-            buildScriptFileName: CompilerTrapBincompatFinder.BuildScriptFileName,
+            buildScriptFileName: CompilerTrapBincompatFinder.ElfBuildScriptFileName,
             kconfigFilePath: Path.Combine(nodePath, ".config.nginx_qemu-x86_64")
         );
 
         CompilerTrapBincompatFinder nodeCT = new(
             trapCompilerPath: SourcesTestEnv.TrapExePath,
             appPath: nodePath,
-            resultsFilePath: $"{SourcesTestEnv.sourcesResultsFilePath}_node",
+            resultsFilePath: SourcesTestEnv.sourcesResultsFilePath,
             kraftfilePath: Path.Combine(nodePath, "Kraftfile"),
             kraftTarget: "--plat qemu --arch x86_64",
             hostCompilerPath: SourcesTestEnv.hostCompilerPath,
@@ -84,57 +84,56 @@ public class  SameConfigsDifferentAppsDifferentFindersTest : IClassFixture<PrepC
             targetAppRuntime: nodeAppRuntime
         );
 
-        // var nodeCTRes = nodeCT.FindSources();
-        // var nodeDryrunRes = nodeDryrun.FindSources();
         var nginxCTRes = nginxCT.FindSources();
-        // var nginxDryrunRes = nginxDryrun.FindSources();
+        SourcesTestEnv.IsolateCompilerTrapResultsFile(nginxCT, Path.Combine(this.GetType().ToString(), "nginx"));
 
-        // if (!nodeCTRes.IsSuccess)
-        // {
-        //     Assert.Fail($"Compiler trap bincompat failed for {nodeCT.AppPath} with status {nodeCTRes.Error}");
-        // }
+        var nodeCTRes = nodeCT.FindSources();
+        SourcesTestEnv.IsolateCompilerTrapResultsFile(nodeCT, Path.Combine(this.GetType().ToString(), "node"));
 
-        // if (!nodeDryrunRes.IsSuccess)
-        // {
-        //     Assert.Fail($"Makefile dry run bincompat failed for {nodeDryrun.AppPath} with status {nodeDryrunRes.Error}");
-        // }
+        var nodeDryrunRes = nodeDryrun.FindSources();
+
+        var nginxDryrunRes = nginxDryrun.FindSources();
+
+        if (!nodeCTRes.IsSuccess)
+        {
+            Assert.Fail($"Compiler trap bincompat failed for {nodeCT.AppPath} with status {nodeCTRes.Error}");
+        }
+
+        if (!nodeDryrunRes.IsSuccess)
+        {
+            Assert.Fail($"Makefile dry run bincompat failed for {nodeDryrun.AppPath} with status {nodeDryrunRes.Error}");
+        }
 
         if (!nginxCTRes.IsSuccess)
         {
             Assert.Fail($"Compiler trap bincompat failed for {nginxCT.AppPath} with status {nginxCTRes.Error}");
         }
 
-        // if (!nginxDryrunRes.IsSuccess)
-        // {
-        //     Assert.Fail($"Makefile dry run bincompat failed for {nginxDryrun.AppPath} with status {nginxDryrunRes.Error}");
-        // }
-
-        
-        foreach(string s in nginxCTRes.Value)
+        if (!nginxDryrunRes.IsSuccess)
         {
-            output.WriteLine(s);
+            Assert.Fail($"Makefile dry run bincompat failed for {nginxDryrun.AppPath} with status {nginxDryrunRes.Error}");
         }
 
-        // CustomAssertsSources.TestMultipleSourceFinders(
-        //     nginxCTRes.Value,
-        //     "Nginx compiler trap", 
-        //     nginxDryrunRes.Value, 
-        //     "Nginx makefile dry run"
-        // );
+        CustomAssertsSources.TestMultipleSourceFinders(
+            nginxCTRes.Value,
+            "Nginx compiler trap", 
+            nginxDryrunRes.Value, 
+            "Nginx makefile dry run"
+        );
 
-        // CustomAssertsSources.TestMultipleSourceFinders(
-        //     nodeCTRes.Value,
-        //     "Node compiler trap", 
-        //     nodeDryrunRes.Value, 
-        //     "Node makefile dry run"
-        // );
+        CustomAssertsSources.TestMultipleSourceFinders(
+            nodeCTRes.Value,
+            "Node compiler trap", 
+            nodeDryrunRes.Value, 
+            "Node makefile dry run"
+        );
 
-        // CustomAssertsSources.TestMultipleSourceFinders(
-        //     nginxCTRes.Value,
-        //     "Nginx compiler trap", 
-        //     nodeCTRes.Value, 
-        //     "Node compiler trap"
-        // );
+        CustomAssertsSources.TestMultipleSourceFinders(
+            nginxCTRes.Value,
+            "Nginx compiler trap", 
+            nodeCTRes.Value, 
+            "Node compiler trap"
+        );
 
     }
 }

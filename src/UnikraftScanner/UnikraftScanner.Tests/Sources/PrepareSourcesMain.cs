@@ -3,6 +3,7 @@
 using System.Diagnostics;
 using Xunit.Abstractions;
 using System.Reflection;
+using UnikraftScanner.Client.Sources;
 
 public class PrepCompilableSourcesEnvFixture : IDisposable
 {
@@ -49,6 +50,26 @@ public class PrepCompilableSourcesEnvFixture : IDisposable
     // path of the compiler used normally to build Unikraft that is proxied by the trap
     public readonly string hostCompilerPath = "/usr/bin/gcc";
 
+
+    public void IsolateCompilerTrapResultsFile(CompilerTrapFinder sourceFinder, string uniqueSufix)
+    {
+        // how do we preserve the results files of trap-based source file finders when the trap cannot change the results file once it wa compiled ?
+        // consider the results file that the trap writes to as a default file that we later rename and move to a specific folder
+        // that characterizes the test + target
+        // now we can easily compare results from different targets without recompiling the trap multiple times to only change the results file
+        new FileInfo(Path.Combine(
+            PrepCompilableSourcesEnvFixture.testArtifactsDirectoryPath, 
+            uniqueSufix
+            )
+        ).Directory.Create();
+
+        
+        File.Move(sourceFinder.ResultsFilePath, Path.Combine(
+            PrepCompilableSourcesEnvFixture.testArtifactsDirectoryPath,
+            uniqueSufix
+            )
+        );
+    }
     private void CloneUnikraftCatalog()
     {
         Directory.SetCurrentDirectory(unikraftCatalogDeployPath);
