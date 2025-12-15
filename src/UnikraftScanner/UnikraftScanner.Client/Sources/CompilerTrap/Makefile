@@ -16,9 +16,10 @@ all: $(COMPILER_TRAP_BINARY)
 
 $(COMPILER_TRAP_BINARY): $(OBJ)
 	$(CXX) -o $(COMPILER_TRAP_BINARY) $(OBJ)
+	rm -f $(OBJ)
 
 $(OBJ): $(SRC)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJ) $(COMPILER_TRAP_BINARY)
+	rm -f $(COMPILER_TRAP_BINARY)

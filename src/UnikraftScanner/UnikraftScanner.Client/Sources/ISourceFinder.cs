@@ -4,5 +4,5 @@ namespace UnikraftScanner.Client.Sources;
 
 public interface ISourceFinder
 {
-    public ResultUnikraftScanner<string[]> FindSources();
+    public ResultUnikraftScanner<List<string>> FindSources();
 }

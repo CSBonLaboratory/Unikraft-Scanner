@@ -5,17 +5,15 @@ using UnikraftScanner.Client.Helpers;
 
 public class CompilerTrapBincompatFinder : CompilerTrapFinder
 {
-    public string KraftfilePath { get; set; }
+    public string KraftfilePath { get; init; }
+    public string KraftTarget { get; init; }
+    public string UnikraftCompilerPath { get; init; }
+    public string UnikraftLinkerPath { get; init; }
+    public BincompatHelper TargetAppRuntime { get; init; }
+    public static readonly string ElfBuildScriptFileName = "uk_scanner_trap_build.sh";
+    private const string relativeScriptPath = ".unikraft/apps/elfloader/scripts";
+    private const string relativeScriptCwdExecutionPath = ".unikraft/apps/elfloader";
 
-    public string KraftTarget { get; set; }
-
-    public string UnikraftCompilerPath { get; set; }
-
-    public string UnikraftLinkerPath { get; set; }
-
-    public BincompatHelper TargetAppRuntime { get; set; }
-
-    public static readonly string BuildScriptFileName = "uk_scanner_trap_build.sh";
     public CompilerTrapBincompatFinder(
         string trapCompilerPath,
         string appPath,
@@ -39,48 +37,50 @@ public class CompilerTrapBincompatFinder : CompilerTrapFinder
     }
 
 
-    public override ResultUnikraftScanner<string[]> FindSources()
+    public override ResultUnikraftScanner<List<string>> FindSources()
     {
 
         var prepResult = TargetAppRuntime.PrepareUnikraftApp();
 
         if (!prepResult.IsSuccess)
         {
-            return ResultUnikraftScanner<string[]>.Failure(prepResult.Error);
+            return ResultUnikraftScanner<List<string>>.Failure(prepResult.Error);
         }
 
         // start the compilation of the whole Unikraft app using makefile commands and using the compiler trap
         string buildScript =
         $@"
         #!/usr/bin/bash
-        make distclean
-        UK_DEFCONFIG={TargetAppRuntime.KConfigFilePath} make defconfig
-        make prepare
+        make CC={base.TrapCompilerPath} LD={base.TrapCompilerPath} distclean
+        UK_DEFCONFIG={TargetAppRuntime.KConfigFilePath} make CC={base.TrapCompilerPath} LD={base.TrapCompilerPath} defconfig
+        make CC={base.TrapCompilerPath} LD={base.TrapCompilerPath} prepare
         make CC={base.TrapCompilerPath} LD={base.TrapCompilerPath}";
 
-        string buildScriptPath = Path.Combine(AppPath, BuildScriptFileName);
+        string elfBuildScriptPath = Path.Combine(AppPath, relativeScriptPath, ElfBuildScriptFileName);
 
-        File.WriteAllText(buildScriptPath, buildScript);
+        Directory.SetCurrentDirectory(Path.Combine(AppPath, relativeScriptCwdExecutionPath));
 
-        File.SetUnixFileMode(buildScriptPath, UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.UserRead);
+        File.WriteAllText(elfBuildScriptPath, buildScript);
 
-        Process makefileAppBuilder = new Process();
-        makefileAppBuilder.StartInfo.FileName = "bash";
-        makefileAppBuilder.StartInfo.Arguments = $" {buildScriptPath}";
+        File.SetUnixFileMode(elfBuildScriptPath, UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.UserRead);
 
-        makefileAppBuilder.StartInfo.RedirectStandardOutput = true;
-        makefileAppBuilder.StartInfo.RedirectStandardError = true;
+        Process elfScriptAppBuilder = new Process();
+        elfScriptAppBuilder.StartInfo.FileName = "bash";
+        elfScriptAppBuilder.StartInfo.Arguments = $" {elfBuildScriptPath}";
 
-        makefileAppBuilder.Start();
+        elfScriptAppBuilder.StartInfo.RedirectStandardOutput = true;
+        elfScriptAppBuilder.StartInfo.RedirectStandardError = true;
 
-        string stdout = makefileAppBuilder.StandardOutput.ReadToEnd();
-        string stderr = makefileAppBuilder.StandardError.ReadToEnd();
+        elfScriptAppBuilder.Start();
 
-        makefileAppBuilder.WaitForExit();
+        string stdout = elfScriptAppBuilder.StandardOutput.ReadToEnd();
+        string stderr = elfScriptAppBuilder.StandardError.ReadToEnd();
 
-        if (makefileAppBuilder.ExitCode != 0)
+        elfScriptAppBuilder.WaitForExit();
+
+        if (elfScriptAppBuilder.ExitCode != 0)
         {
-            return ResultUnikraftScanner<string[]>.Failure(
+            return ResultUnikraftScanner<List<string>>.Failure(
 
                 new ErrorUnikraftScanner<string>(
                     @$"Using make commands to build binary compat app fails:
@@ -91,8 +91,19 @@ public class CompilerTrapBincompatFinder : CompilerTrapFinder
             );
         }
 
-        makefileAppBuilder.Close();
+        elfScriptAppBuilder.Close();
 
-        return File.ReadLines(ResultsFilePath).ToArray();
+        string[] srcAndCmdChunks = File.ReadAllText(ResultsFilePath)
+            .Split(new string[]{"\n\n"}, StringSplitOptions.RemoveEmptyEntries)
+            .ToArray();
+        List<string> ans = new();
+        foreach(string chunk in srcAndCmdChunks)
+        {
+            string[] chunkTokens = chunk.Split('\n');
+            if(!ans.Equals("None"))
+                ans.Add(chunkTokens[0]);
+        }
+
+        return ans;
     }
 }

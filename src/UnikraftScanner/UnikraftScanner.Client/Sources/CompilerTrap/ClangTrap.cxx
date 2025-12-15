@@ -20,6 +20,8 @@ int main(int argc, char* argv[]){
 
     proxyCompileCmd += " ";
 
+    bool sourceFound = false;
+
     for(int i = 1; i < argc; i++){
 
         std::string cmd_token(argv[i]);
@@ -46,6 +48,7 @@ int main(int argc, char* argv[]){
 
             if(file_extension.compare(".c") == 0 && std::filesystem::exists(cmd_token)){
                 sourceFilePath = cmd_token;
+                sourceFound = true;
             }
         }
 
@@ -54,8 +57,11 @@ int main(int argc, char* argv[]){
         
     }
 
-    resultsOutput<< "SRC: " << sourceFilePath  << "\n";
-    resultsOutput<< "CMD: "  << proxyCompileCmd << "\n";
+    if(sourceFound)
+        resultsOutput << sourceFilePath << "\n";
+    else
+        resultsOutput << "None" << "\n";
+    resultsOutput<< proxyCompileCmd << "\n";
     resultsOutput<<"\n";
 
     resultsOutput.close();

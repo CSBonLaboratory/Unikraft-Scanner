@@ -33,13 +33,13 @@ public class PrepCompilableSourcesEnvFixture : IDisposable
     public static readonly string testArtifactsDirectoryPath = Path.Combine(unikraftScannerTestsRootPath, "Sources/.artifacts");
 
     // path in the UnikraftScanner.Tests of the trap binary in the testing framework, adding the time of its build for easier verification
-    static readonly string testExeTrapPath = Path.Combine(testArtifactsDirectoryPath, $"TestTrap_{DateTime.Now.ToString("y.M.d_H.m.s")}");
+    static readonly string testExeTrapPath = Path.Combine(testArtifactsDirectoryPath, $"TestTrapCompiler_{DateTime.Now.ToString("y.M.d_H.m.s")}");
 
     // path in the UnikraftScanner.Tests of the file that will contain results from trap execution, that will contain all the sources used in Unikraft compilation
     public readonly string sourcesResultsFilePath = Path.Combine(testArtifactsDirectoryPath, $"trap_results_{DateTime.Now.ToString("y.M.d_H.m.s")}.txt");
 
     // path in the UnikraftScanner.Tests used to clone the unikraft app catalog to
-    public static readonly string unikraftCatalogDeployPath = Path.Combine(unikraftScannerTestsRootPath, "Sources/inputs/");
+    public static readonly string unikraftCatalogDeployPath = Path.Combine(unikraftScannerTestsRootPath, "Sources/.artifacts/");
 
     // path in the UnikraftScanner.Tests where the Unikraft App Catalog has the root repo directory
     public readonly string unikraftCatalogRootPath = Path.Combine(unikraftCatalogDeployPath, "catalog");
@@ -152,13 +152,13 @@ public class PrepCompilableSourcesEnvFixture : IDisposable
         BuildCompilerTrap();
 
         // move the trap binary to UnikraftScanner.Tests project
-        File.Copy(
+        File.Move(
             sourceFileName: originalExeTrapPath,
             destFileName: testExeTrapPath,
             overwrite: true
         );
 
-        this.TrapExePath = originalExeTrapPath;
+        this.TrapExePath = testExeTrapPath;
     }
 
     public void KraftBuildUnikraftAppOrLib(

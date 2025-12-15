@@ -14,7 +14,7 @@ public class CompilerTrapFinder : ISourceFinder
         ResultsFilePath = resultsFilePath;
     }
 
-    public virtual ResultUnikraftScanner<string[]> FindSources()
+    public virtual ResultUnikraftScanner<List<string>> FindSources()
     {
 
         return null;

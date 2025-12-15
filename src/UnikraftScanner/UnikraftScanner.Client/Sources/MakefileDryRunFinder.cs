@@ -11,7 +11,7 @@ public class MakefileDryRunFinder : ISourceFinder
     public string KraftTarget { get; init; }
     public BincompatHelper TargetAppRuntime { get; init; }
     public static readonly string buildScriptFileName = "uk_scanner_make_dryrun_build.sh";
-    private const string dumpFileName = "uk_scanner_make_dump.txt";
+    public const string dumpFileName = "uk_scanner_make_dump.txt";
     private const string relativeScriptPath = ".unikraft/apps/elfloader/scripts";
     private const string relativeScriptCwdExecutionPath = ".unikraft/apps/elfloader";
     public string MakefileDumpFilePath {get; init; }
@@ -33,22 +33,25 @@ public class MakefileDryRunFinder : ISourceFinder
 
         TargetAppRuntime = targetAppRuntime;
     }
-    public ResultUnikraftScanner<string[]> FindSources()
+    public ResultUnikraftScanner<List<string>> FindSources()
     {
         var prepResult = TargetAppRuntime.PrepareUnikraftApp();
 
         if (!prepResult.IsSuccess)
         {
-            return ResultUnikraftScanner<string[]>.Failure(prepResult.Error);
+            return ResultUnikraftScanner<List<string>>.Failure(prepResult.Error);
         }
 
         Directory.SetCurrentDirectory(Path.Combine(AppPath, relativeScriptCwdExecutionPath));
 
         string buildScript =
-        $@"make distclean
+        $@"make distclean 
+        echo '~~~~~~~~~~~~~~~~~~~~~~ DEFCONFIG ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~'
         UK_DEFCONFIG={TargetAppRuntime.KConfigFilePath} make defconfig
-        make -n prepare > {MakefileDumpFilePath}
-        make -n -j $(nproc) > {MakefileDumpFilePath}";
+        echo '++++++++++++++++++++++ PREPARE ++++++++++++++++++++++++++++++++++++++++'
+        make -n prepare
+        echo '---------------------- MAIN ---------------------------------------------------'
+        make -n -j $(nproc)";
 
         string buildScriptPath = Path.Combine(AppPath, relativeScriptPath, buildScriptFileName);
 
@@ -72,7 +75,7 @@ public class MakefileDryRunFinder : ISourceFinder
 
         if (makefileAppBuilder.ExitCode != 0)
         {
-            return ResultUnikraftScanner<string[]>.Failure(
+            return ResultUnikraftScanner<List<string>>.Failure(
 
                 new ErrorUnikraftScanner<string>(
                     @$"Using make commands to build binary compat app fails:
@@ -82,6 +85,8 @@ public class MakefileDryRunFinder : ISourceFinder
                 )
             );
         }
+
+        File.WriteAllText(MakefileDumpFilePath, stdout);
 
         makefileAppBuilder.Close();
 
@@ -113,6 +118,6 @@ public class MakefileDryRunFinder : ISourceFinder
             }
         }
 
-        return (ResultUnikraftScanner<string[]>)ans.ToArray();
+        return (ResultUnikraftScanner<List<string>>)ans;
     }
 }
