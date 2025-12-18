@@ -9,27 +9,6 @@ public class CustomAssertsSources : Assert
     {
         HashSet<string> ans1 = new(finder1);
         HashSet<string> ans2 = new(finder2);
-
-        finder1.Sort();
-        finder2.Sort();
-
-        var f1 = File.AppendText("/home/karakitay/Desktop/Unikraft-Scanner/src/UnikraftScanner/UnikraftScanner.Tests/Sources/.artifacts/a1.txt");
-        
-        foreach(string a in finder1)
-        {
-            f1.WriteLine(a);
-        }
-        
-        f1.Close();
-
-        var f2 = File.AppendText("/home/karakitay/Desktop/Unikraft-Scanner/src/UnikraftScanner/UnikraftScanner.Tests/Sources/.artifacts/a2.txt");
-        
-        foreach(string a in finder2)
-        {
-            f2.WriteLine(a);
-        }
-        
-        f2.Close();
         
         if(ans1.SetEquals(ans2))
             return;

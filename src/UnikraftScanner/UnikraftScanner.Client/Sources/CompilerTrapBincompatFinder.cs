@@ -100,7 +100,7 @@ public class CompilerTrapBincompatFinder : CompilerTrapFinder
         foreach(string chunk in srcAndCmdChunks)
         {
             string[] chunkTokens = chunk.Split('\n');
-            if(!ans.Equals("None"))
+            if(!chunkTokens[0].Equals("None"))
                 ans.Add(chunkTokens[0]);
         }
 

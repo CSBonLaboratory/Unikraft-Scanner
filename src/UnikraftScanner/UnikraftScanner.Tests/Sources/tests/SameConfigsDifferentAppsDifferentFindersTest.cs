@@ -63,7 +63,7 @@ public class  SameConfigsDifferentAppsDifferentFindersTest : IClassFixture<PrepC
             kraftTarget: "--plat qemu --arch x86_64",
             appPath: nodePath,
             buildScriptFileName: CompilerTrapBincompatFinder.ElfBuildScriptFileName,
-            kconfigFilePath: Path.Combine(nodePath, ".config.nginx_qemu-x86_64")
+            kconfigFilePath: Path.Combine(nodePath, ".config.node_qemu-x86_64")
         );
 
         CompilerTrapBincompatFinder nodeCT = new(
@@ -78,8 +78,8 @@ public class  SameConfigsDifferentAppsDifferentFindersTest : IClassFixture<PrepC
         );
 
         MakefileDryRunFinder nodeDryrun = new(
-            appPath: nginxPath,
-            kraftfilePath: Path.Combine(nginxPath, "Kraftfile"),
+            appPath: nodePath,
+            kraftfilePath: Path.Combine(nodePath, "Kraftfile"),
             kraftTarget: "--plat qemu --arch x86_64",
             targetAppRuntime: nodeAppRuntime
         );
@@ -109,27 +109,33 @@ public class  SameConfigsDifferentAppsDifferentFindersTest : IClassFixture<PrepC
         {
             Assert.Fail($"Makefile dry run bincompat failed for {nginxDryrun.AppPath} with status {nginxDryrunRes.Error}");
         }
-        
+
+        List<string> nginxCTFinal = nginxCTRes.Value.Select(s => Path.GetRelativePath(nginxCT.AppPath, s)).ToList();
+        List<string> nginxDryrunFinal = nginxDryrunRes.Value.Select(s => Path.GetRelativePath(nginxDryrun.AppPath, s)).ToList();
+
+        List<string> nodeCTFinal = nodeCTRes.Value.Select(s => Path.GetRelativePath(nodeCT.AppPath, s)).ToList();
+        List<string> nodeDrynrunFinal = nodeDryrunRes.Value.Select(s => Path.GetRelativePath(nodeDryrun.AppPath, s)).ToList();
+
         CustomAssertsSources.TestMultipleSourceFinders(
-            nginxCTRes.Value,
+            nginxCTFinal,
             "Nginx compiler trap", 
-            nginxDryrunRes.Value, 
+            nginxDryrunFinal, 
             "Nginx makefile dry run"
         );
 
-        // CustomAssertsSources.TestMultipleSourceFinders(
-        //     nodeCTRes.Value,
-        //     "Node compiler trap", 
-        //     nodeDryrunRes.Value, 
-        //     "Node makefile dry run"
-        // );
+        CustomAssertsSources.TestMultipleSourceFinders(
+            nodeCTFinal,
+            "Node compiler trap", 
+            nodeDrynrunFinal, 
+            "Node makefile dry run"
+        );
 
-        // CustomAssertsSources.TestMultipleSourceFinders(
-        //     nginxCTRes.Value,
-        //     "Nginx compiler trap", 
-        //     nodeCTRes.Value, 
-        //     "Node compiler trap"
-        // );
+        CustomAssertsSources.TestMultipleSourceFinders(
+            nginxCTFinal,
+            "Nginx compiler trap", 
+            nodeCTFinal, 
+            "Node compiler trap"
+        );
 
     }
 }
