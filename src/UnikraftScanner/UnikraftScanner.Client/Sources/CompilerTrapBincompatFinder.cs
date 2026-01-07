@@ -9,7 +9,7 @@ public class CompilerTrapBincompatFinder : CompilerTrapFinder
     public string KraftTarget { get; init; }
     public string UnikraftCompilerPath { get; init; }
     public string UnikraftLinkerPath { get; init; }
-    public BincompatHelper TargetAppRuntime { get; init; }
+    public BincompatContext TargetAppRuntime { get; init; }
     public static readonly string ElfBuildScriptFileName = "uk_scanner_trap_build.sh";
     private const string relativeScriptPath = ".unikraft/apps/elfloader/scripts";
     private const string relativeScriptCwdExecutionPath = ".unikraft/apps/elfloader";
@@ -22,7 +22,7 @@ public class CompilerTrapBincompatFinder : CompilerTrapFinder
         string kraftTarget,
         string hostCompilerPath,
         string hostLinkerPath,
-        BincompatHelper targetAppRuntime
+        BincompatContext targetAppRuntime
         ) : base(trapCompilerPath, appPath, resultsFilePath)
     {
         KraftfilePath = kraftfilePath;
@@ -40,7 +40,7 @@ public class CompilerTrapBincompatFinder : CompilerTrapFinder
     public override ResultUnikraftScanner<List<string>> FindSources()
     {
 
-        var prepResult = TargetAppRuntime.PrepareUnikraftApp();
+        var prepResult = TargetAppRuntime.FetchResources4UnikraftApp();
 
         if (!prepResult.IsSuccess)
         {

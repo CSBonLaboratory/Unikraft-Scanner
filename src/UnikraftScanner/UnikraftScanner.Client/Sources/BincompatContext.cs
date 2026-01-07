@@ -1,22 +1,30 @@
 ﻿namespace UnikraftScanner.Client;
 using System.Diagnostics;
 using UnikraftScanner.Client.Helpers;
-public class BincompatHelper
-{
-    public string KraftfilePath { get; set; }
-    public string KraftTarget { get; set; }
-    public string? KConfigFilePath { get; set; }
-    public string AppPath { get; set; }
-    public string BuildScriptFileName = "uk_scanner_build.sh";
-    private bool prepTriggered = false;
 
-    public BincompatHelper(string kraftfilePath, string kraftTarget, string appPath, string buildScriptFileName, string? kconfigFilePath = null)
+public class BincompatContext
+{
+    public string KraftfilePath { get; init; }
+    public string KraftTarget { get; init; }
+    public string? KConfigFilePath { get; private set; }
+    public string AppPath { get; init; }
+    public string BuildScriptFileName = "uk_scanner_build.sh";
+    public IUnikraftAppResourceFetchingStrategy Fetcher {get; init;}
+
+    public BincompatContext(
+        string kraftfilePath,
+        string kraftTarget,
+        string appPath,
+        IUnikraftAppResourceFetchingStrategy fetcher,
+        string buildScriptFileName,
+        string? kconfigFilePath = null)
     {
         KraftfilePath = kraftfilePath;
         KraftTarget = kraftTarget;
         AppPath = appPath;
         BuildScriptFileName = buildScriptFileName;
         KConfigFilePath = kconfigFilePath;
+        Fetcher = fetcher;
     }
     protected bool CheckElfloader(string appPath)
     {
@@ -166,44 +174,15 @@ public class BincompatHelper
 
     }
 
-    public ResultUnikraftScanner<bool> PrepareUnikraftApp()
+    public ResultUnikraftScanner<bool> FetchResources4UnikraftApp()
     {
 
-        if (prepTriggered)
-            return (ResultUnikraftScanner<bool>)true;
+        var fetchRes = Fetcher.ApplyStrategy(this);
 
-        prepTriggered = true;
-        
-        Directory.SetCurrentDirectory(AppPath);
-
-        // ##target## can be --target <name> / --plat <p> --arch <a> tuple
-        const string kraftbuildTemplateCmd = "build -g --no-cache --no-update --no-prompt --log-level trace --log-type basic ##target##";
-
-        Process kraftBuilder = new Process();
-        kraftBuilder.StartInfo.FileName = "kraft";
-        kraftBuilder.StartInfo.Arguments = $" {kraftbuildTemplateCmd}".Replace("##target##", KraftTarget);
-        kraftBuilder.StartInfo.RedirectStandardError = true;
-
-        kraftBuilder.Start();
-        
-        string stderr = kraftBuilder.StandardError.ReadToEnd();
-
-        kraftBuilder.WaitForExit();
-
-        if (kraftBuilder.ExitCode != 0)
+        if (!fetchRes.IsSuccess)
         {
-            return ResultUnikraftScanner<bool>.Failure(
-
-                new ErrorUnikraftScanner<string>(
-                    @$"Building Unikraft app at {Directory.GetCurrentDirectory()} using command \
-                    `{kraftBuilder.StartInfo.Arguments}` exited with code {kraftBuilder.ExitCode}\n{stderr}",
-                    ErrorTypes.KraftBuildProblem
-                )
-            );
+            return fetchRes;
         }
-
-        kraftBuilder.Close();
-
 
         if (!CheckElfloader(AppPath))
         {

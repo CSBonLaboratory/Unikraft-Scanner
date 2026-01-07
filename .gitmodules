@@ -1,0 +1,3 @@
+[submodule "src/UnikraftScanner/UnikraftScanner.Client/submodules/kraftkit"]
+	path = src/UnikraftScanner/UnikraftScanner.Client/submodules/kraftkit
+	url = https://github.com/unikraft/kraftkit.git

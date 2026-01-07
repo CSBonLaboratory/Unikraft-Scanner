@@ -50,7 +50,15 @@ public class PrepCompilableSourcesEnvFixture : IDisposable
     // path of the compiler used normally to build Unikraft that is proxied by the trap
     public readonly string hostCompilerPath = "/usr/bin/gcc";
 
+    // path to a kraft binary with debug symbols used as an optimization for resource fetching
+    // instead of a normal kraft binary that will also do an additional redundant compilation
+    // if that binary exists the test envrinonment initializer won't rebuild kraftkit as in 
+    // https://unikraft.org/docs/cli/hacking#using-a-developer-environment
+    // since it is very costly
+    public readonly string originalKraftkitPath = Path.Combine(unikraftScannerClientRootPath, "submodules", "kraftkit", "dist", "kraft");
+    public readonly string gdbHackScriptPath = Path.Combine(unikraftScannerClientRootPath, "Sources", "ResourceFetcher", "GDBFetchHack.py");
 
+    
     public void IsolateCompilerTrapResultsFile(CompilerTrapFinder sourceFinder, string uniqueSufix)
     {
         // how do we preserve the results files of trap-based source file finders when the trap cannot change the results file once it wa compiled ?
@@ -193,3 +201,6 @@ public class PrepCompilableSourcesEnvFixture : IDisposable
         Directory.SetCurrentDirectory(prevPWD);
     }
 }
+
+[CollectionDefinition(nameof(SourcesFinderTestParallel))]
+public class SourcesFinderTestParallel : ICollectionFixture<PrepCompilableSourcesEnvFixture>{}

@@ -9,7 +9,7 @@ public class MakefileDryRunFinder : ISourceFinder
     public string KraftfilePath { get; init; }
     public string AppPath { get; init; }
     public string KraftTarget { get; init; }
-    public BincompatHelper TargetAppRuntime { get; init; }
+    public BincompatContext TargetAppRuntime { get; init; }
     public static readonly string buildScriptFileName = "uk_scanner_make_dryrun_build.sh";
     public const string dumpFileName = "uk_scanner_make_dump.txt";
     private const string relativeScriptPath = ".unikraft/apps/elfloader/scripts";
@@ -19,7 +19,7 @@ public class MakefileDryRunFinder : ISourceFinder
         string appPath,
         string kraftfilePath,
         string kraftTarget,
-        BincompatHelper targetAppRuntime
+        BincompatContext targetAppRuntime
         )
     {
 
@@ -35,7 +35,7 @@ public class MakefileDryRunFinder : ISourceFinder
     }
     public ResultUnikraftScanner<List<string>> FindSources()
     {
-        var prepResult = TargetAppRuntime.PrepareUnikraftApp();
+        var prepResult = TargetAppRuntime.FetchResources4UnikraftApp();
 
         if (!prepResult.IsSuccess)
         {

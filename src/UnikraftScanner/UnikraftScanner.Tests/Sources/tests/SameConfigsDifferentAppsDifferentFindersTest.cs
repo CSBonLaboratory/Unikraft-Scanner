@@ -4,7 +4,8 @@ using Xunit.Abstractions;
 using UnikraftScanner.Client.Sources;
 using UnikraftScanner.Client;
 
-public class  SameConfigsDifferentAppsDifferentFindersTest : IClassFixture<PrepCompilableSourcesEnvFixture>
+[CollectionDefinition(nameof(SourcesFinderTestParallel))]
+public class SameConfigsDifferentAppsDifferentFindersTest
 {
     private readonly ITestOutputHelper output;
     private PrepCompilableSourcesEnvFixture SourcesTestEnv { get; set; }
@@ -22,22 +23,22 @@ public class  SameConfigsDifferentAppsDifferentFindersTest : IClassFixture<PrepC
 
         string nodePath  = Path.Combine(SourcesTestEnv.unikraftCatalogRootPath, "library/node/18");
 
-        // SourcesTestEnv.KraftBuildUnikraftAppOrLib("library/nginx/1.25");
-
-        // SourcesTestEnv.KraftBuildUnikraftAppOrLib("library/node/18");
-
-
         // -------------------------------------------- NGINX ---------------------------------------------------------------------
 
-        BincompatHelper nginxAppRuntime = new(
+        GDBKraftkitFetcher gdbFetcher = new(
+            SourcesTestEnv.originalKraftkitPath,
+            SourcesTestEnv.gdbHackScriptPath
+        );
+
+        BincompatContext nginxAppRuntime = new(
             kraftfilePath: Path.Combine(nginxPath, "Kraftfile"),
             kraftTarget: "--plat qemu --arch x86_64",
             appPath: nginxPath,
+            fetcher: gdbFetcher,
             buildScriptFileName: CompilerTrapBincompatFinder.ElfBuildScriptFileName,
             kconfigFilePath: Path.Combine(nginxPath, ".config.nginx_qemu-x86_64")
         );
 
-        
         CompilerTrapBincompatFinder nginxCT = new(
             trapCompilerPath: SourcesTestEnv.TrapExePath,
             appPath: nginxPath,
@@ -58,10 +59,11 @@ public class  SameConfigsDifferentAppsDifferentFindersTest : IClassFixture<PrepC
 
         // -------------------------------------------- NODE 18 ---------------------------------------------------------------------
 
-        BincompatHelper nodeAppRuntime = new(
+        BincompatContext nodeAppRuntime = new(
             kraftfilePath: Path.Combine(nodePath, "Kraftfile"),
             kraftTarget: "--plat qemu --arch x86_64",
             appPath: nodePath,
+            fetcher: gdbFetcher,
             buildScriptFileName: CompilerTrapBincompatFinder.ElfBuildScriptFileName,
             kconfigFilePath: Path.Combine(nodePath, ".config.node_qemu-x86_64")
         );
