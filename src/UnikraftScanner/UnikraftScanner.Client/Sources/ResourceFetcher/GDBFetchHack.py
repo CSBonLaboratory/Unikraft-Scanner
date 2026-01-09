@@ -9,7 +9,8 @@ import gdb
 # so instruct the debugger to remain in the parent
 gdb.execute("set follow-fork-mode parent")
 
-breakpoint_name = "kraftkit.sh/internal/cli/kraft/utils.BuildRootfs"
+breakpoint_name = "kraftkit.sh/unikraft/app.(*application).Build"
+
 
 # this is used to check that the breakpoint was hit in the BinCompatHelper.cs
 success_msg = "KRAFT HACK SUCCESS"
@@ -18,6 +19,7 @@ class BreakpointAfterFetch (gdb.Breakpoint):
       def __init__ (self):
         super(BreakpointAfterFetch, self).__init__ (breakpoint_name)
       def stop (self):
+
         print(f"Unikraft Scanner reached endpoint {self.location}")
         print(success_msg)
 
@@ -40,7 +42,7 @@ def kraft_end_check_handler(event : gdb.ExitedEvent):
       # bad exit which will be checked in GDBKraftkitFetcher.cs
       gdb.execute(f"exit {event.exit_code}")
   except:
-    print("GDB successful, now do a graceful exit")
+    print("GDB successful or an unthinkable error")
   
 
 gdb.events.exited.connect(kraft_end_check_handler)
